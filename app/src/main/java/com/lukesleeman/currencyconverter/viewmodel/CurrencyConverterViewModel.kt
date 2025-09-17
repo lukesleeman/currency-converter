@@ -11,18 +11,22 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.text.DecimalFormat
 
-open class CurrencyConverterViewModel(
+class CurrencyConverterViewModel(
     private val repository: CurrencyRepository
 ) : ViewModel() {
 
+    companion object {
+        private const val DECIMAL_FORMAT_PATTERN = "#,##0.00"
+    }
+
     private val _currencyTextFieldValues = MutableStateFlow<Map<String, TextFieldValue>>(emptyMap())
-    open val currencyTextFieldValues: StateFlow<Map<String, TextFieldValue>> = _currencyTextFieldValues.asStateFlow()
+    val currencyTextFieldValues: StateFlow<Map<String, TextFieldValue>> = _currencyTextFieldValues.asStateFlow()
 
-    private val decimalFormat = DecimalFormat("#,##0.00")
+    private val decimalFormat = DecimalFormat(DECIMAL_FORMAT_PATTERN)
 
-    open val selectedCurrencies: StateFlow<List<Currency>> = repository.selectedCurrencies
-    open val isLoading: StateFlow<Boolean> = repository.isLoading
-    open val error: StateFlow<String?> = repository.error
+    val selectedCurrencies: StateFlow<List<Currency>> = repository.selectedCurrencies
+    val isLoading: StateFlow<Boolean> = repository.isLoading
+    val error: StateFlow<String?> = repository.error
 
     init {
         // Initialize with default values for initial currencies
@@ -59,7 +63,7 @@ open class CurrencyConverterViewModel(
         _currencyTextFieldValues.value = newTextFields
     }
 
-    open fun onCurrencyAmountChanged(currencyCode: String, newTfv: TextFieldValue) {
+    fun onCurrencyAmountChanged(currencyCode: String, newTfv: TextFieldValue) {
         val numericValue = parseAmount(newTfv.text)
 
         if (numericValue != null) {
@@ -77,7 +81,7 @@ open class CurrencyConverterViewModel(
         }
     }
 
-    open fun addCurrency(currency: Currency) {
+    fun addCurrency(currency: Currency) {
         val wasEmpty = repository.selectedCurrencies.value.isEmpty()
         repository.addCurrency(currency)
 
@@ -102,17 +106,17 @@ open class CurrencyConverterViewModel(
         }
     }
 
-    open fun getAvailableCurrencies(): List<Currency> {
+    fun getAvailableCurrencies(): List<Currency> {
         return repository.getAvailableCurrencies()
     }
 
-    open fun refreshExchangeRates() {
+    fun refreshExchangeRates() {
         viewModelScope.launch {
             repository.fetchExchangeRates() // Repository handles EUR-based fetching
         }
     }
 
-    open fun clearError() {
+    fun clearError() {
         repository.clearError()
     }
 }

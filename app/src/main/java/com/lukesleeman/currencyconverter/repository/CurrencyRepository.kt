@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * Repository for managing currency data and exchange rates.
  * Exchange rates are always fetched and stored relative to EUR.
  */
-open class CurrencyRepository(private val api: CurrencyApi) {
+class CurrencyRepository(private val api: CurrencyApi) {
 
     private val _selectedCurrencies = MutableStateFlow(
         listOf(
@@ -21,24 +21,24 @@ open class CurrencyRepository(private val api: CurrencyApi) {
             AVAILABLE_CURRENCIES.first { it.code == "JPY" }
         )
     )
-    open val selectedCurrencies: StateFlow<List<Currency>> = _selectedCurrencies.asStateFlow()
+    val selectedCurrencies: StateFlow<List<Currency>> = _selectedCurrencies.asStateFlow()
 
     // Rates are stored relative to EUR
     private val _exchangeRates = MutableStateFlow<Map<String, Double>>(emptyMap())
-    open val exchangeRates: StateFlow<Map<String, Double>> = _exchangeRates.asStateFlow()
+    val exchangeRates: StateFlow<Map<String, Double>> = _exchangeRates.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
-    open val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
-    open val error: StateFlow<String?> = _error.asStateFlow()
+    val error: StateFlow<String?> = _error.asStateFlow()
 
     private val INTERNAL_API_BASE_CURRENCY = "EUR"
 
     /**
      * Fetches exchange rates. Rates are always fetched relative to EUR.
      */
-    open suspend fun fetchExchangeRates() { // Removed baseCurrency parameter
+    suspend fun fetchExchangeRates() { // Removed baseCurrency parameter
         _isLoading.value = true
         _error.value = null
 
@@ -61,7 +61,7 @@ open class CurrencyRepository(private val api: CurrencyApi) {
         }
     }
 
-    open fun addCurrency(currency: Currency) {
+    fun addCurrency(currency: Currency) {
         val currentList = _selectedCurrencies.value.toMutableList()
         if (!currentList.contains(currency)) {
             currentList.add(currency)
@@ -69,13 +69,13 @@ open class CurrencyRepository(private val api: CurrencyApi) {
         }
     }
 
-    open fun removeCurrency(currency: Currency) {
+    fun removeCurrency(currency: Currency) {
         val currentList = _selectedCurrencies.value.toMutableList()
         currentList.remove(currency)
         _selectedCurrencies.value = currentList
     }
 
-    open fun getAvailableCurrencies(): List<Currency> {
+    fun getAvailableCurrencies(): List<Currency> {
         val selected = _selectedCurrencies.value.map { it.code }.toSet()
         return AVAILABLE_CURRENCIES.filter { it.code !in selected }
     }
@@ -87,7 +87,7 @@ open class CurrencyRepository(private val api: CurrencyApi) {
      * @param amount The amount in fromCurrencyCode.
      * @return The converted amount in toCurrencyCode.
      */
-    open fun calculateConvertedAmount(
+    fun calculateConvertedAmount(
         fromCurrencyCode: String,
         toCurrencyCode: String,
         amount: Double
@@ -122,7 +122,7 @@ open class CurrencyRepository(private val api: CurrencyApi) {
         return amount 
     }
 
-    open fun clearError() {
+    fun clearError() {
         _error.value = null
     }
 
