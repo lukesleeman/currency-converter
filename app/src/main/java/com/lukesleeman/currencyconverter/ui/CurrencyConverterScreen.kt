@@ -1,5 +1,6 @@
 package com.lukesleeman.currencyconverter.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
 import com.lukesleeman.currencyconverter.data.Currency
@@ -19,16 +21,14 @@ import com.lukesleeman.currencyconverter.di.AppModule
 import com.lukesleeman.currencyconverter.network.CurrencyApi
 import com.lukesleeman.currencyconverter.repository.CurrencyRepository
 import com.lukesleeman.currencyconverter.ui.components.AddCurrencyDialog
-import com.lukesleeman.currencyconverter.ui.components.AmountInput
 import com.lukesleeman.currencyconverter.ui.components.CurrencyItem
 import com.lukesleeman.currencyconverter.ui.theme.CurrencyConverterTheme
 import com.lukesleeman.currencyconverter.viewmodel.CurrencyConverterViewModel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.flowOf
 import retrofit2.Response
+import java.text.DecimalFormat
 
 /**
  * Main Currency Converter Screen
@@ -38,10 +38,9 @@ import retrofit2.Response
 fun CurrencyConverterScreen(
     viewModel: CurrencyConverterViewModel = remember { AppModule.provideCurrencyConverterViewModel() }
 ) {
-    val inputAmount by viewModel.inputAmount.collectAsState()
-    val selectedBaseCurrency by viewModel.selectedBaseCurrency.collectAsState()
+    val selectedBaseCurrencyCode by viewModel.selectedBaseCurrencyCode.collectAsState()
     val selectedCurrencies by viewModel.selectedCurrencies.collectAsState()
-    val convertedAmounts by viewModel.convertedAmounts.collectAsState(initial = emptyMap())
+    val currencyTextFieldValues by viewModel.currencyTextFieldValues.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
 
@@ -50,7 +49,6 @@ fun CurrencyConverterScreen(
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
-        // Top App Bar
         TopAppBar(
             title = {
                 Text(
@@ -80,15 +78,8 @@ fun CurrencyConverterScreen(
             )
         )
 
-        // Amount Input
-        AmountInput(
-            value = inputAmount,
-            onValueChange = viewModel::updateInputAmount,
-            baseCurrencyCode = selectedBaseCurrency
-        )
-
         // Info about using default rates (shown when no recent API call was successful)
-        if (!isLoading && error == null && convertedAmounts.isEmpty()) {
+        if (!isLoading && error == null && selectedCurrencies.isNotEmpty() && currencyTextFieldValues.values.all { it.text == "0.00" || it.text == "0,00" }) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -106,7 +97,6 @@ fun CurrencyConverterScreen(
             }
         }
 
-        // Loading indicator
         if (isLoading) {
             Box(
                 modifier = Modifier
@@ -118,7 +108,6 @@ fun CurrencyConverterScreen(
             }
         }
 
-        // Error message
         error?.let { errorMessage ->
             Card(
                 modifier = Modifier
@@ -152,31 +141,28 @@ fun CurrencyConverterScreen(
             }
         }
 
-        // Currency List
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
-            items(selectedCurrencies) { currency ->
-                val amount = convertedAmounts[currency] ?: 0.0
-                val isBaseCurrency = currency.code == selectedBaseCurrency
+            items(selectedCurrencies, key = { it.code }) { currency ->
+                val textFieldValue = currencyTextFieldValues[currency.code] ?: TextFieldValue("0.00")
+                val isBaseCurrency = currency.code == selectedBaseCurrencyCode
 
                 CurrencyItem(
                     currency = currency,
-                    convertedAmount = amount,
-                    isBaseCurrency = isBaseCurrency,
-                    onBaseCurrencySelected = {
-                        viewModel.setBaseCurrency(currency.code)
+                    amount = textFieldValue,
+                    onAmountChange = { newTfv ->
+                        viewModel.onCurrencyAmountChanged(currency.code, newTfv)
                     },
-                    onRemoveClick = {
-                        if (selectedCurrencies.size > 1) {
-                            viewModel.removeCurrency(currency)
+                    modifier = Modifier.clickable { // Allow making a currency base by clicking the item
+                        if (!isBaseCurrency) {
+                            viewModel.setBaseCurrency(currency.code)
                         }
                     }
                 )
             }
 
-            // Add currency button at the bottom of the list
             item {
                 Card(
                     modifier = Modifier
@@ -204,7 +190,6 @@ fun CurrencyConverterScreen(
         }
     }
 
-    // Add Currency Dialog
     if (showAddCurrencyDialog) {
         AddCurrencyDialog(
             availableCurrencies = viewModel.getAvailableCurrencies(),
@@ -219,70 +204,47 @@ fun CurrencyConverterScreen(
 @Preview(showBackground = true)
 @Composable
 fun CurrencyConverterScreenPreview() {
-    // Dummy currencies
     val usd = Currency("USD", "United States Dollar", "$")
     val eur = Currency("EUR", "Euro", "€")
     val jpy = Currency("JPY", "Japanese Yen", "¥")
-    val gbp = Currency("GBP", "British Pound", "£")
 
-    // Fake API
     val fakeApi = object : CurrencyApi {
         override suspend fun getExchangeRates(baseCurrency: String): Response<ExchangeRateResponse> {
-            return Response.success(ExchangeRateResponse(baseCurrency, mapOf(
-                "USD" to 1.0, "EUR" to 0.912, "JPY" to 133.0, "GBP" to 0.78
-            )))
+            return Response.success(ExchangeRateResponse(baseCurrency, mapOf("EUR" to 0.9, "JPY" to 130.0, "USD" to 1.0)))
         }
     }
 
-    // Fake Repository
     val fakeRepository = object : CurrencyRepository(fakeApi) {
-        override val selectedCurrencies: StateFlow<List<Currency>> = 
-            MutableStateFlow(listOf(usd, eur, jpy, gbp)).asStateFlow()
-        override val exchangeRates: StateFlow<Map<String, Double>> = 
-            MutableStateFlow(mapOf("USD" to 1.0, "EUR" to 0.912, "JPY" to 133.0, "GBP" to 0.78)).asStateFlow()
+        private val _selectedCurrencies = MutableStateFlow(listOf(usd, eur, jpy))
+        override val selectedCurrencies: StateFlow<List<Currency>> = _selectedCurrencies.asStateFlow()
+        private val _exchangeRates = MutableStateFlow(mapOf("EUR" to 0.9, "JPY" to 130.0, "USD" to 1.0))
+        override val exchangeRates: StateFlow<Map<String, Double>> = _exchangeRates.asStateFlow()
         override val isLoading: StateFlow<Boolean> = MutableStateFlow(false).asStateFlow()
         override val error: StateFlow<String?> = MutableStateFlow<String?>(null).asStateFlow()
-
-        override suspend fun fetchExchangeRates(baseCurrency: String) {}
-        override fun addCurrency(currency: Currency) {}
-        override fun removeCurrency(currency: Currency) {}
-        override fun getAvailableCurrencies(): List<Currency> = listOf(usd, eur, jpy, gbp)
-        override fun calculateConvertedAmount(
-            baseCurrency: String,
-            targetCurrency: String,
-            amount: Double
-        ): Double {
-            val rates = exchangeRates.value
-            return if (baseCurrency == targetCurrency) {
-                amount
-            } else {
-                val rate = rates[targetCurrency] ?: 1.0
-                amount * rate
-            }
+        override suspend fun fetchExchangeRates(baseCurrency: String) { /* No-op for preview */ }
+        override fun addCurrency(currency: Currency) {
+            _selectedCurrencies.value = (_selectedCurrencies.value + currency).distinctBy { it.code }
         }
+        override fun removeCurrency(currency: Currency) {
+            _selectedCurrencies.value = _selectedCurrencies.value.filterNot { it.code == currency.code }
+        }
+        override fun getAvailableCurrencies(): List<Currency> = listOf(Currency("GBP", "British Pound", "£"))
         override fun clearError() {}
     }
 
-    // Basic 'fake' ViewModel
+    val decimalFormat = DecimalFormat("#,##0.00")
     val fakeViewModel = object : CurrencyConverterViewModel(fakeRepository) {
-        override val inputAmount: StateFlow<String> = MutableStateFlow("100").asStateFlow()
-        override val selectedBaseCurrency: StateFlow<String> = MutableStateFlow("USD").asStateFlow()
-        // Use selectedCurrencies from fakeRepository
-        // Use exchangeRates from fakeRepository
-        override val convertedAmounts: Flow<Map<Currency, Double>> = flowOf(
-            mapOf(
-                usd to 100.0,
-                eur to 91.2,
-                jpy to 13300.0,
-                gbp to 78.0,
-            )
-        )
-        // Use isLoading from fakeRepository
-        // Use error from fakeRepository
-
-        override fun updateInputAmount(amount: String) {}
-        override fun setBaseCurrency(currencyCode: String) {}
-        // addCurrency, removeCurrency, getAvailableCurrencies, clearError, refreshExchangeRates will use fakeRepository's impl
+        override val selectedBaseCurrencyCode: StateFlow<String> = MutableStateFlow("USD").asStateFlow()
+        override val currencyTextFieldValues: StateFlow<Map<String, TextFieldValue>> = 
+            MutableStateFlow(
+                mapOf(
+                    "USD" to TextFieldValue(decimalFormat.format(100.0)),
+                    "EUR" to TextFieldValue(decimalFormat.format(90.0)),
+                    "JPY" to TextFieldValue(decimalFormat.format(13000.0))
+                )
+            ).asStateFlow()
+        override fun onCurrencyAmountChanged(currencyCode: String, newTfv: TextFieldValue) { /* No-op for preview */ }
+        override fun setBaseCurrency(newBaseCode: String) { /* No-op for preview */ }
     }
 
     CurrencyConverterTheme {
