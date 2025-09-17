@@ -5,7 +5,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,7 +40,6 @@ fun CurrencyConverterScreen(
         isLoading = isLoading,
         error = error,
         onKeyboardInput = viewModel::onKeyboardInput,
-        onRefresh = viewModel::refreshExchangeRates,
         onAddCurrency = viewModel::addCurrency,
         onClearError = viewModel::clearError,
         getAvailableCurrencies = viewModel::getAvailableCurrencies
@@ -56,7 +54,6 @@ private fun CurrencyConverterScreenContent(
     isLoading: Boolean,
     error: String?,
     onKeyboardInput: (String, String) -> Unit,
-    onRefresh: () -> Unit,
     onAddCurrency: (Currency) -> Unit,
     onClearError: () -> Unit,
     getAvailableCurrencies: () -> List<Currency>
@@ -83,20 +80,6 @@ private fun CurrencyConverterScreenContent(
                         fontWeight = FontWeight.Bold
                     )
                 )
-            },
-            actions = {
-                IconButton(onClick = onRefresh) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh rates"
-                    )
-                }
-                IconButton(onClick = { showAddCurrencyDialog = true }) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add currency"
-                    )
-                }
             },
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -282,7 +265,6 @@ fun CurrencyConverterScreenPreview() {
             isLoading = false,
             error = null,
             onKeyboardInput = { _, _ -> },
-            onRefresh = { },
             onAddCurrency = { },
             onClearError = { },
             getAvailableCurrencies = { availableCurrencies }
