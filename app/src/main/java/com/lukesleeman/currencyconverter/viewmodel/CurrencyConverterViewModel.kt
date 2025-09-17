@@ -119,4 +119,19 @@ class CurrencyConverterViewModel(
     fun clearError() {
         repository.clearError()
     }
+
+    fun onKeyboardInput(currencyCode: String, newText: String) {
+        val numericValue = parseAmount(newText)
+
+        if (numericValue != null) {
+            updateAllCurrencyFields(currencyCode, numericValue)
+            val currentFields = _currencyTextFieldValues.value.toMutableMap()
+            currentFields[currencyCode] = TextFieldValue(newText)
+            _currencyTextFieldValues.value = currentFields
+        } else {
+            val currentFields = _currencyTextFieldValues.value.toMutableMap()
+            currentFields[currencyCode] = TextFieldValue(newText)
+            _currencyTextFieldValues.value = currentFields
+        }
+    }
 }

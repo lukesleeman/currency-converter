@@ -1,18 +1,18 @@
 package com.lukesleeman.currencyconverter.ui.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,7 +21,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -37,14 +36,25 @@ import com.lukesleeman.currencyconverter.ui.theme.CurrencyConverterTheme
 fun CurrencyItem(
     currency: Currency,
     amount: TextFieldValue,
-    onAmountChange: (TextFieldValue) -> Unit,
-    modifier: Modifier = Modifier // Removed onRemoveClick parameter
+    modifier: Modifier = Modifier,
+    onFocusRequest: (() -> Unit)? = null,
+    isActive: Boolean = false
 ) {
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clickable {
+                onFocusRequest?.invoke()
+            },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isActive) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        )
     ) {
         Row(
             modifier = Modifier
@@ -70,10 +80,10 @@ fun CurrencyItem(
 
             Spacer(modifier = Modifier.weight(1f)) // This spacer will take up the flexible space to the left
 
-            TextField(
+            OutlinedTextField(
                 value = amount,
-                onValueChange = onAmountChange,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                onValueChange = { },
+                readOnly = true,
                 singleLine = true,
                 textStyle = MaterialTheme.typography.headlineSmall.copy(
                     textAlign = TextAlign.End,
@@ -99,7 +109,7 @@ fun CurrencyItemVariationsPreview() {
         CurrencyItem(
             currency = eur,
             amount = amount,
-            onAmountChange = { amount = it }
+            onFocusRequest = { }
         )
     }
 }
