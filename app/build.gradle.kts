@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+}
+
+// Load API keys
+val apiKeys = Properties().apply {
+    val apiKeysFile = rootProject.file("apikeys.properties")
+    if (apiKeysFile.exists()) {
+        load(apiKeysFile.inputStream())
+    }
 }
 
 android {
@@ -19,12 +29,16 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "API_KEY", "\"${apiKeys["EXCHANGE_RATE_API_KEY"]}\"")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            buildConfigField("String", "API_KEY", "\"${apiKeys["EXCHANGE_RATE_API_KEY"]}\"")
         }
     }
     compileOptions {
@@ -36,6 +50,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

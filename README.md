@@ -22,8 +22,24 @@ between multiple currencies in real-time.
 - **API**: exchangerate-api.com for live exchange rates
 - **Offline**: Default exchange rates for offline functionality
 
+## Setup
+
+### API Key Configuration
+
+This app uses the [exchangerate-api.com](https://exchangerate-api.com) API for live exchange rates. To set up:
+
+1. Get a free API key from [exchangerate-api.com](https://exchangerate-api.com)
+2. Create a file named `apikeys.properties` in the root directory
+3. Add your API key to the file:
+   ```
+   EXCHANGE_RATE_API_KEY=your_api_key_here
+   ```
+
+**Note**: The `apikeys.properties` file is gitignored and will not be committed to version control for security.
+
 ## Building the App
 
 1. Clone the repository
-2. Open in Android Studio
-3. Build and run on an Android device or emulator (API 24+)
+2. Set up the API key (see above)
+3. Open in Android Studio
+4. Build and run on an Android device or emulator (API 24+)
