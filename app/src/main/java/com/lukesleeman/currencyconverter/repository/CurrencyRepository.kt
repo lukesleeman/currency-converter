@@ -24,40 +24,31 @@ class CurrencyRepository(private val api: CurrencyApi) {
     val selectedCurrencies: StateFlow<List<Currency>> = _selectedCurrencies.asStateFlow()
 
     // Rates are stored relative to EUR
-    private val _exchangeRates = MutableStateFlow<Map<String, Double>>(emptyMap())
-    val exchangeRates: StateFlow<Map<String, Double>> = _exchangeRates.asStateFlow()
+    private var exchangeRates: Map<String, Double> = emptyMap()
 
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
-
-    private val INTERNAL_API_BASE_CURRENCY = "EUR"
+    private companion object {
+        const val INTERNAL_API_BASE_CURRENCY = "EUR"
+    }
 
     /**
-     * Fetches exchange rates. Rates are always fetched relative to EUR.
+     * Fetches exchange rates and returns a Result for better error handling
      */
-    suspend fun fetchExchangeRates() { // Removed baseCurrency parameter
-        _isLoading.value = true
-        _error.value = null
-
-        try {
-            val response = api.getExchangeRates(INTERNAL_API_BASE_CURRENCY) // Always use EUR
+    suspend fun fetchExchangeRates(): Result<Unit> {
+        return try {
+            val response = api.getExchangeRates(INTERNAL_API_BASE_CURRENCY)
             if (response.isSuccessful) {
                 response.body()?.let { exchangeRateResponse ->
                     // Ensure EUR itself has a rate of 1.0 in the map
                     val ratesWithEurBase = exchangeRateResponse.conversionRates.toMutableMap()
-                    ratesWithEurBase[INTERNAL_API_BASE_CURRENCY] = 1.0 
-                    _exchangeRates.value = ratesWithEurBase
+                    ratesWithEurBase[INTERNAL_API_BASE_CURRENCY] = 1.0
+                    exchangeRates = ratesWithEurBase
                 }
+                Result.success(Unit)
             } else {
-                _error.value = "Failed to fetch exchange rates (API base: EUR)"
+                Result.failure(Exception("Failed to fetch exchange rates (API base: EUR)"))
             }
         } catch (e: Exception) {
-            _error.value = e.message ?: "Unknown error occurred during rate fetch"
-        } finally {
-            _isLoading.value = false
+            Result.failure(e)
         }
     }
 
@@ -69,61 +60,58 @@ class CurrencyRepository(private val api: CurrencyApi) {
         }
     }
 
-    fun removeCurrency(currency: Currency) {
-        val currentList = _selectedCurrencies.value.toMutableList()
-        currentList.remove(currency)
-        _selectedCurrencies.value = currentList
-    }
-
     fun getAvailableCurrencies(): List<Currency> {
         val selected = _selectedCurrencies.value.map { it.code }.toSet()
         return AVAILABLE_CURRENCIES.filter { it.code !in selected }
     }
 
     /**
-     * Calculates converted amount. Assumes _exchangeRates are EUR-based.
-     * @param fromCurrencyCode The currency code of the amount.
-     * @param toCurrencyCode The target currency code to convert to.
-     * @param amount The amount in fromCurrencyCode.
-     * @return The converted amount in toCurrencyCode.
+     * Converts all currencies in the list from the anchor currency
      */
-    fun calculateConvertedAmount(
+    fun convertAllCurrencies(anchorCode: String, amount: Double, currencies: List<Currency>): Map<String, Double> {
+        return currencies.associate { currency ->
+            currency.code to calculateConvertedAmount(anchorCode, currency.code, amount)
+        }
+    }
+
+    /**
+     * Calculates converted amount between two currencies using EUR-based rates.
+     */
+    private fun calculateConvertedAmount(
         fromCurrencyCode: String,
         toCurrencyCode: String,
         amount: Double
     ): Double {
         if (fromCurrencyCode == toCurrencyCode) return amount
 
-        val rates = _exchangeRates.value // These are EUR-based rates
+        val rates = exchangeRates
 
         val fromRateToBase = rates[fromCurrencyCode]
         val toRateFromBase = rates[toCurrencyCode]
 
-        if (fromCurrencyCode == INTERNAL_API_BASE_CURRENCY) { // From EUR to Target
-            return amount * (toRateFromBase ?: 1.0)
-        }
-
-        if (toCurrencyCode == INTERNAL_API_BASE_CURRENCY) { // From Source to EUR
-            return if (fromRateToBase != null && fromRateToBase != 0.0) {
-                amount / fromRateToBase
-            } else {
-                amount // Fallback or handle error, here returning original amount
+        return when {
+            fromCurrencyCode == INTERNAL_API_BASE_CURRENCY -> {
+                // From EUR to Target
+                amount * (toRateFromBase ?: 1.0)
+            }
+            toCurrencyCode == INTERNAL_API_BASE_CURRENCY -> {
+                // From Source to EUR
+                if (fromRateToBase != null && fromRateToBase != 0.0) {
+                    amount / fromRateToBase
+                } else {
+                    amount // Fallback
+                }
+            }
+            else -> {
+                // Convert fromCurrency -> EUR -> toCurrency
+                if (fromRateToBase != null && fromRateToBase != 0.0 && toRateFromBase != null) {
+                    val amountInEur = amount / fromRateToBase
+                    amountInEur * toRateFromBase
+                } else {
+                    amount // Fallback
+                }
             }
         }
-        
-        // Convert fromCurrency -> EUR -> toCurrency
-        if (fromRateToBase != null && fromRateToBase != 0.0 && toRateFromBase != null) {
-            val amountInEur = amount / fromRateToBase
-            return amountInEur * toRateFromBase
-        }
-        
-        // Fallback if rates are missing, return original amount or handle error appropriately
-        // This could happen if a currency was added but rates haven't updated yet for it.
-        return amount 
-    }
-
-    fun clearError() {
-        _error.value = null
     }
 
     /**
@@ -141,8 +129,6 @@ class CurrencyRepository(private val api: CurrencyApi) {
     }
 
     init {
-        _exchangeRates.value = getDefaultRates()
-        // Consider an initial fetch for EUR based rates if desired immediately.
-        // kotlinx.coroutines.GlobalScope.launch { fetchExchangeRates() } // Example, requires a CoroutineScope
+        exchangeRates = getDefaultRates()
     }
 }

@@ -5,7 +5,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lukesleeman.currencyconverter.data.Currency
-import com.lukesleeman.currencyconverter.repository.CurrencyRepository
+import kotlinx.coroutines.flow.Flow
 import com.lukesleeman.currencyconverter.ui.state.CurrencyConverterUiState
 import com.lukesleeman.currencyconverter.ui.state.CurrencyDisplayItem
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,7 +15,11 @@ import kotlinx.coroutines.launch
 import java.text.DecimalFormat
 
 class CurrencyConverterViewModel(
-    private val repository: CurrencyRepository
+    private val selectedCurrenciesFlow: Flow<List<Currency>>,
+    private val addCurrency: (Currency) -> Unit,
+    private val getAllAvailableCurrencies: () -> List<Currency>,
+    private val convertAllCurrencies: (anchorCode: String, amount: Double, currencies: List<Currency>) -> Map<String, Double>,
+    private val onFetchRates: suspend () -> Result<Unit>
 ) : ViewModel() {
 
     companion object {
@@ -37,40 +41,28 @@ class CurrencyConverterViewModel(
     val uiState: StateFlow<CurrencyConverterUiState> = _uiState.asStateFlow()
 
     init {
-        // Initialize with currencies from repository
-        val initialCurrencies = repository.selectedCurrencies.value
-        if (initialCurrencies.isNotEmpty()) {
-            initializeWithCurrencies(initialCurrencies)
-        }
-
-        // Observe repository state changes
+        // Observe selected currencies and initialize UI state
         viewModelScope.launch {
-            repository.isLoading.collect { loading ->
-                _uiState.value = _uiState.value.copy(isLoading = loading)
-            }
-        }
-
-        viewModelScope.launch {
-            repository.error.collect { error ->
-                _uiState.value = _uiState.value.copy(error = error)
+            selectedCurrenciesFlow.collect { currencies ->
+                if (currencies.isNotEmpty()) {
+                    initializeWithCurrencies(currencies)
+                }
             }
         }
 
         // Fetch exchange rates
-        viewModelScope.launch { repository.fetchExchangeRates() }
+        refreshExchangeRates()
     }
 
     private fun initializeWithCurrencies(currencies: List<Currency>) {
         val firstCurrency = currencies.first()
+        val conversionResults = convertAllCurrencies(firstCurrency.code, 1.0, currencies)
+
         val displayItems = currencies.map { currency ->
             if (currency.code == firstCurrency.code) {
                 CurrencyDisplayItem(currency, TextFieldValue("1.00"))
             } else {
-                val convertedAmount = repository.calculateConvertedAmount(
-                    firstCurrency.code,
-                    currency.code,
-                    1.0
-                )
+                val convertedAmount = conversionResults[currency.code] ?: 1.0
                 CurrencyDisplayItem(currency, TextFieldValue(formatNumber(convertedAmount)))
             }
         }
@@ -234,15 +226,14 @@ class CurrencyConverterViewModel(
         anchorCurrencyCode: String,
         anchorAmount: Double
     ): List<CurrencyDisplayItem> {
+        val currencyList = currencies.map { it.currency }
+        val conversionResults = convertAllCurrencies(anchorCurrencyCode, anchorAmount, currencyList)
+
         return currencies.map { item ->
             if (item.currency.code == anchorCurrencyCode) {
                 item // Keep the anchor currency as is
             } else {
-                val convertedAmount = repository.calculateConvertedAmount(
-                    anchorCurrencyCode,
-                    item.currency.code,
-                    anchorAmount
-                )
+                val convertedAmount = conversionResults[item.currency.code] ?: anchorAmount
                 item.copy(
                     textFieldValue = TextFieldValue(
                         text = formatNumber(convertedAmount),
@@ -254,40 +245,25 @@ class CurrencyConverterViewModel(
     }
 
     fun addCurrency(currency: Currency) {
-        val currentState = _uiState.value
-        repository.addCurrency(currency)
-
-        // Create new currency display item with converted amount
-        val anchorAmount = parseAmount(currentState.activeCurrency.textFieldValue.text) ?: 1.0
-        val convertedAmount = repository.calculateConvertedAmount(
-            currentState.activeCurrency.currency.code,
-            currency.code,
-            anchorAmount
-        )
-
-        val newCurrencyItem = CurrencyDisplayItem(
-            currency = currency,
-            textFieldValue = TextFieldValue(formatNumber(convertedAmount))
-        )
-
-        // Update UI state with new currency
-        _uiState.value = currentState.copy(
-            currencies = currentState.currencies + newCurrencyItem
-        )
+        addCurrency.invoke(currency)
     }
 
     fun clearError() {
-        repository.clearError()
         _uiState.value = _uiState.value.copy(error = null)
     }
 
     fun getAvailableCurrencies(): List<Currency> {
-        return repository.getAvailableCurrencies()
+        return getAllAvailableCurrencies()
     }
 
     fun refreshExchangeRates() {
         viewModelScope.launch {
-            repository.fetchExchangeRates()
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            val result = onFetchRates()
+            _uiState.value = _uiState.value.copy(
+                isLoading = false,
+                error = if (result.isFailure) result.exceptionOrNull()?.message else null
+            )
         }
     }
 }

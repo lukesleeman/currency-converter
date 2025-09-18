@@ -35,6 +35,12 @@ object AppModule {
      * Provides the CurrencyConverterViewModel instance
      */
     fun provideCurrencyConverterViewModel(): CurrencyConverterViewModel {
-        return CurrencyConverterViewModel(currencyRepository)
+        return CurrencyConverterViewModel(
+            selectedCurrenciesFlow = currencyRepository.selectedCurrencies,
+            addCurrency = currencyRepository::addCurrency,
+            getAllAvailableCurrencies = currencyRepository::getAvailableCurrencies,
+            convertAllCurrencies = currencyRepository::convertAllCurrencies,
+            onFetchRates = currencyRepository::fetchExchangeRates
+        )
     }
 }
