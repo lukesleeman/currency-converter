@@ -1,10 +1,13 @@
 package com.lukesleeman.currencyconverter.viewmodel
 
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lukesleeman.currencyconverter.data.Currency
 import com.lukesleeman.currencyconverter.repository.CurrencyRepository
+import com.lukesleeman.currencyconverter.ui.state.CurrencyConverterUiState
+import com.lukesleeman.currencyconverter.ui.state.CurrencyDisplayItem
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,22 +22,202 @@ class CurrencyConverterViewModel(
         private const val DECIMAL_FORMAT_PATTERN = "#,##0.00"
     }
 
-    private val _currencyTextFieldValues = MutableStateFlow<Map<String, TextFieldValue>>(emptyMap())
-    val currencyTextFieldValues: StateFlow<Map<String, TextFieldValue>> = _currencyTextFieldValues.asStateFlow()
-
     private val decimalFormat = DecimalFormat(DECIMAL_FORMAT_PATTERN)
 
-    val selectedCurrencies: StateFlow<List<Currency>> = repository.selectedCurrencies
-    val isLoading: StateFlow<Boolean> = repository.isLoading
-    val error: StateFlow<String?> = repository.error
+    private val _uiState = MutableStateFlow(
+        CurrencyConverterUiState(
+            currencies = emptyList(),
+            activeCurrency = CurrencyDisplayItem(
+                Currency("USD", "US Dollar", "$"),
+                TextFieldValue("0.00")
+            ),
+            isLoading = true
+        )
+    )
+    val uiState: StateFlow<CurrencyConverterUiState> = _uiState.asStateFlow()
 
     init {
-        // Initialize with default values for initial currencies
+        // Initialize with currencies from repository
         val initialCurrencies = repository.selectedCurrencies.value
-        updateAllCurrencyFields(initialCurrencies.first().code, 1.0, initialCurrencies)
+        if (initialCurrencies.isNotEmpty()) {
+            initializeWithCurrencies(initialCurrencies)
+        }
+
+        // Observe repository state changes
+        viewModelScope.launch {
+            repository.isLoading.collect { loading ->
+                _uiState.value = _uiState.value.copy(isLoading = loading)
+            }
+        }
+
+        viewModelScope.launch {
+            repository.error.collect { error ->
+                _uiState.value = _uiState.value.copy(error = error)
+            }
+        }
 
         // Fetch exchange rates
         viewModelScope.launch { repository.fetchExchangeRates() }
+    }
+
+    private fun initializeWithCurrencies(currencies: List<Currency>) {
+        val firstCurrency = currencies.first()
+        val displayItems = currencies.map { currency ->
+            if (currency.code == firstCurrency.code) {
+                CurrencyDisplayItem(currency, TextFieldValue("1.00"))
+            } else {
+                val convertedAmount = repository.calculateConvertedAmount(
+                    firstCurrency.code,
+                    currency.code,
+                    1.0
+                )
+                CurrencyDisplayItem(currency, TextFieldValue(formatNumber(convertedAmount)))
+            }
+        }
+
+        _uiState.value = _uiState.value.copy(
+            currencies = displayItems,
+            activeCurrency = displayItems.first(),
+            isLoading = false
+        )
+    }
+
+    /**
+     * Set which currency is active and select all its text
+     */
+    fun setActiveCurrency(currencyCode: String) {
+        val currentState = _uiState.value
+        val targetCurrency = currentState.currencies.find { it.currency.code == currencyCode }
+            ?: return
+
+        // Select all text in the target currency
+        val activeCurrencyWithSelection = targetCurrency.copy(
+            textFieldValue = targetCurrency.textFieldValue.copy(
+                selection = TextRange(0, targetCurrency.textFieldValue.text.length)
+            )
+        )
+
+        // Update currencies list with the selected text
+        val updatedCurrencies = currentState.currencies.map { item ->
+            if (item.currency.code == currencyCode) activeCurrencyWithSelection else item
+        }
+
+        _uiState.value = currentState.copy(
+            currencies = updatedCurrencies,
+            activeCurrency = activeCurrencyWithSelection
+        )
+    }
+
+    /**
+     * Update the active currency's text field (handles direct typing)
+     */
+    fun updateActiveFieldText(newValue: TextFieldValue) {
+        val currentState = _uiState.value
+        val activeCurrencyCode = currentState.activeCurrency.currency.code
+
+        // Update the active currency with new value
+        val updatedActiveCurrency = currentState.activeCurrency.copy(
+            textFieldValue = newValue
+        )
+
+        // Update the currencies list
+        val updatedCurrencies = currentState.currencies.map { item ->
+            if (item.currency.code == activeCurrencyCode) updatedActiveCurrency else item
+        }
+
+        // Update other currencies based on conversion if input is valid
+        val numericValue = parseAmount(newValue.text)
+        val finalCurrencies = if (numericValue != null) {
+            updateOtherCurrencies(updatedCurrencies, activeCurrencyCode, numericValue)
+        } else {
+            updatedCurrencies
+        }
+
+        _uiState.value = currentState.copy(
+            currencies = finalCurrencies,
+            activeCurrency = updatedActiveCurrency
+        )
+    }
+
+    /**
+     * Add a digit to the active currency (handles numeric keyboard and text selection)
+     */
+    fun addDigit(digit: String) {
+        val currentState = _uiState.value
+        val currentValue = currentState.activeCurrency.textFieldValue
+
+        val newText = when {
+            // If text is selected, replace the selected portion with the digit
+            !currentValue.selection.collapsed -> {
+                val text = currentValue.text
+                text.substring(0, currentValue.selection.start) + digit + text.substring(currentValue.selection.end)
+            }
+            // If current text is default "0.00", replace it
+            currentValue.text == "0.00" -> digit
+            // Otherwise append
+            else -> currentValue.text + digit
+        }
+
+        val newValue = TextFieldValue(
+            text = newText,
+            selection = TextRange(newText.length)
+        )
+
+        updateActiveFieldText(newValue)
+    }
+
+    /**
+     * Add decimal point to the active currency
+     */
+    fun addDecimalPoint() {
+        val currentState = _uiState.value
+        val currentValue = currentState.activeCurrency.textFieldValue
+
+        val newText = when {
+            // If text is selected, replace with "0."
+            !currentValue.selection.collapsed -> "0."
+            // If already has decimal, do nothing
+            currentValue.text.contains(".") -> currentValue.text
+            // If empty or just "0", make it "0."
+            currentValue.text.isEmpty() || currentValue.text == "0" -> "0."
+            // Otherwise append decimal
+            else -> currentValue.text + "."
+        }
+
+        val newValue = TextFieldValue(
+            text = newText,
+            selection = TextRange(newText.length)
+        )
+
+        updateActiveFieldText(newValue)
+    }
+
+    /**
+     * Handle backspace on the active currency
+     */
+    fun backspace() {
+        val currentState = _uiState.value
+        val currentValue = currentState.activeCurrency.textFieldValue
+
+        val newText = when {
+            // If text is selected, delete the selection
+            !currentValue.selection.collapsed -> {
+                val text = currentValue.text
+                text.substring(0, currentValue.selection.start) +
+                text.substring(currentValue.selection.end)
+            }
+            // If single character or empty, reset to default
+            currentValue.text.length <= 1 -> "0.00"
+            // Otherwise remove last character
+            else -> currentValue.text.dropLast(1)
+        }
+
+        val newValue = TextFieldValue(
+            text = newText,
+            selection = TextRange(newText.length)
+        )
+
+        updateActiveFieldText(newValue)
     }
 
     private fun formatNumber(number: Double): String {
@@ -46,64 +229,56 @@ class CurrencyConverterViewModel(
                else text.replace(",", "").toDoubleOrNull()
     }
 
-    private fun updateAllCurrencyFields(anchorCurrencyCode: String, anchorAmount: Double, currencies: List<Currency> = selectedCurrencies.value) {
-        val newTextFields = mutableMapOf<String, TextFieldValue>()
-        currencies.forEach { currency ->
-            if (currency.code == anchorCurrencyCode) {
-                newTextFields[currency.code] = TextFieldValue(formatNumber(anchorAmount))
+    private fun updateOtherCurrencies(
+        currencies: List<CurrencyDisplayItem>,
+        anchorCurrencyCode: String,
+        anchorAmount: Double
+    ): List<CurrencyDisplayItem> {
+        return currencies.map { item ->
+            if (item.currency.code == anchorCurrencyCode) {
+                item // Keep the anchor currency as is
             } else {
                 val convertedAmount = repository.calculateConvertedAmount(
                     anchorCurrencyCode,
-                    currency.code,
+                    item.currency.code,
                     anchorAmount
                 )
-                newTextFields[currency.code] = TextFieldValue(formatNumber(convertedAmount))
+                item.copy(
+                    textFieldValue = TextFieldValue(
+                        text = formatNumber(convertedAmount),
+                        selection = TextRange(0) // Cursor at start for non-active currencies
+                    )
+                )
             }
-        }
-        _currencyTextFieldValues.value = newTextFields
-    }
-
-    fun onCurrencyAmountChanged(currencyCode: String, newTfv: TextFieldValue) {
-        val numericValue = parseAmount(newTfv.text)
-
-        if (numericValue != null) {
-            // Valid number input - recalculate all currencies using this as anchor
-            updateAllCurrencyFields(currencyCode, numericValue)
-            // Override the anchor field with user's exact input (preserves formatting)
-            val currentFields = _currencyTextFieldValues.value.toMutableMap()
-            currentFields[currencyCode] = newTfv
-            _currencyTextFieldValues.value = currentFields
-        } else {
-            // Invalid number input - just update this field
-            val currentFields = _currencyTextFieldValues.value.toMutableMap()
-            currentFields[currencyCode] = newTfv
-            _currencyTextFieldValues.value = currentFields
         }
     }
 
     fun addCurrency(currency: Currency) {
-        val wasEmpty = repository.selectedCurrencies.value.isEmpty()
+        val currentState = _uiState.value
         repository.addCurrency(currency)
 
-        if (wasEmpty) {
-            // If list was empty, initialize with this currency at 1.0
-            updateAllCurrencyFields(currency.code, 1.0, listOf(currency))
-        } else {
-            // Add the new currency to existing fields, using first existing field as anchor
-            val currentFields = _currencyTextFieldValues.value
-            val existingEntry = currentFields.entries.firstOrNull()
-            if (existingEntry != null) {
-                val anchorAmount = parseAmount(existingEntry.value.text) ?: 1.0
-                val convertedAmount = repository.calculateConvertedAmount(
-                    existingEntry.key,
-                    currency.code,
-                    anchorAmount
-                )
-                val updatedFields = currentFields.toMutableMap()
-                updatedFields[currency.code] = TextFieldValue(formatNumber(convertedAmount))
-                _currencyTextFieldValues.value = updatedFields
-            }
-        }
+        // Create new currency display item with converted amount
+        val anchorAmount = parseAmount(currentState.activeCurrency.textFieldValue.text) ?: 1.0
+        val convertedAmount = repository.calculateConvertedAmount(
+            currentState.activeCurrency.currency.code,
+            currency.code,
+            anchorAmount
+        )
+
+        val newCurrencyItem = CurrencyDisplayItem(
+            currency = currency,
+            textFieldValue = TextFieldValue(formatNumber(convertedAmount))
+        )
+
+        // Update UI state with new currency
+        _uiState.value = currentState.copy(
+            currencies = currentState.currencies + newCurrencyItem
+        )
+    }
+
+    fun clearError() {
+        repository.clearError()
+        _uiState.value = _uiState.value.copy(error = null)
     }
 
     fun getAvailableCurrencies(): List<Currency> {
@@ -112,26 +287,7 @@ class CurrencyConverterViewModel(
 
     fun refreshExchangeRates() {
         viewModelScope.launch {
-            repository.fetchExchangeRates() // Repository handles EUR-based fetching
-        }
-    }
-
-    fun clearError() {
-        repository.clearError()
-    }
-
-    fun onKeyboardInput(currencyCode: String, newText: String) {
-        val numericValue = parseAmount(newText)
-
-        if (numericValue != null) {
-            updateAllCurrencyFields(currencyCode, numericValue)
-            val currentFields = _currencyTextFieldValues.value.toMutableMap()
-            currentFields[currencyCode] = TextFieldValue(newText)
-            _currencyTextFieldValues.value = currentFields
-        } else {
-            val currentFields = _currencyTextFieldValues.value.toMutableMap()
-            currentFields[currencyCode] = TextFieldValue(newText)
-            _currencyTextFieldValues.value = currentFields
+            repository.fetchExchangeRates()
         }
     }
 }

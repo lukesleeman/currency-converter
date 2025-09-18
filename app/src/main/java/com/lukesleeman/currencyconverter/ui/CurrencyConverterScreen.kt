@@ -18,6 +18,8 @@ import com.lukesleeman.currencyconverter.di.AppModule
 import com.lukesleeman.currencyconverter.ui.components.AddCurrencyDialog
 import com.lukesleeman.currencyconverter.ui.components.CurrencyItem
 import com.lukesleeman.currencyconverter.ui.components.NumericKeyboard
+import com.lukesleeman.currencyconverter.ui.state.CurrencyConverterUiState
+import com.lukesleeman.currencyconverter.ui.state.CurrencyDisplayItem
 import com.lukesleeman.currencyconverter.ui.theme.CurrencyConverterTheme
 import com.lukesleeman.currencyconverter.viewmodel.CurrencyConverterViewModel
 
@@ -29,17 +31,15 @@ import com.lukesleeman.currencyconverter.viewmodel.CurrencyConverterViewModel
 fun CurrencyConverterScreen(
     viewModel: CurrencyConverterViewModel = remember { AppModule.provideCurrencyConverterViewModel() }
 ) {
-    val selectedCurrencies by viewModel.selectedCurrencies.collectAsState()
-    val currencyTextFieldValues by viewModel.currencyTextFieldValues.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val error by viewModel.error.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
 
     CurrencyConverterScreenContent(
-        selectedCurrencies = selectedCurrencies,
-        currencyTextFieldValues = currencyTextFieldValues,
-        isLoading = isLoading,
-        error = error,
-        onKeyboardInput = viewModel::onKeyboardInput,
+        uiState = uiState,
+        onSetActiveCurrency = viewModel::setActiveCurrency,
+        onUpdateActiveFieldText = viewModel::updateActiveFieldText,
+        onAddDigit = viewModel::addDigit,
+        onAddDecimalPoint = viewModel::addDecimalPoint,
+        onBackspace = viewModel::backspace,
         onAddCurrency = viewModel::addCurrency,
         onClearError = viewModel::clearError,
         getAvailableCurrencies = viewModel::getAvailableCurrencies
@@ -49,25 +49,17 @@ fun CurrencyConverterScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CurrencyConverterScreenContent(
-    selectedCurrencies: List<Currency>,
-    currencyTextFieldValues: Map<String, TextFieldValue>,
-    isLoading: Boolean,
-    error: String?,
-    onKeyboardInput: (String, String) -> Unit,
+    uiState: CurrencyConverterUiState,
+    onSetActiveCurrency: (String) -> Unit,
+    onUpdateActiveFieldText: (TextFieldValue) -> Unit,
+    onAddDigit: (String) -> Unit,
+    onAddDecimalPoint: () -> Unit,
+    onBackspace: () -> Unit,
     onAddCurrency: (Currency) -> Unit,
     onClearError: () -> Unit,
     getAvailableCurrencies: () -> List<Currency>
 ) {
     var showAddCurrencyDialog by remember { mutableStateOf(false) }
-    var activeCurrencyCode by remember { mutableStateOf(selectedCurrencies.firstOrNull()?.code) }
-
-    fun getCurrentText(currencyCode: String): String {
-        return currencyTextFieldValues[currencyCode]?.text?.replace(",", "") ?: "0.00"
-    }
-
-    fun handleKeyboardInput(currencyCode: String, newText: String) {
-        onKeyboardInput(currencyCode, newText)
-    }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -88,7 +80,7 @@ private fun CurrencyConverterScreenContent(
         )
 
         // Info about using default rates (shown when no recent API call was successful)
-        if (!isLoading && error == null && selectedCurrencies.isNotEmpty() && currencyTextFieldValues.values.all { it.text == "0.00" || it.text == "0,00" }) {
+        if (!uiState.isLoading && uiState.error == null && uiState.currencies.isNotEmpty() && uiState.currencies.all { it.textFieldValue.text == "0.00" || it.textFieldValue.text == "0,00" }) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -106,7 +98,7 @@ private fun CurrencyConverterScreenContent(
             }
         }
 
-        if (isLoading) {
+        if (uiState.isLoading) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -117,7 +109,7 @@ private fun CurrencyConverterScreenContent(
             }
         }
 
-        error?.let { errorMessage ->
+        uiState.error?.let { errorMessage ->
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -156,16 +148,17 @@ private fun CurrencyConverterScreenContent(
                 .weight(1f),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
-            items(selectedCurrencies, key = { it.code }) { currency ->
-                val textFieldValue = currencyTextFieldValues[currency.code] ?: TextFieldValue("0.00")
-
+            items(uiState.currencies, key = { it.currency.code }) { currencyDisplayItem ->
                 CurrencyItem(
-                    currency = currency,
-                    amount = textFieldValue,
+                    currency = currencyDisplayItem.currency,
+                    amount = currencyDisplayItem.textFieldValue,
                     onFocusRequest = {
-                        activeCurrencyCode = currency.code
+                        onSetActiveCurrency(currencyDisplayItem.currency.code)
                     },
-                    isActive = currency.code == (activeCurrencyCode ?: selectedCurrencies.firstOrNull()?.code)
+                    onValueChange = { newValue ->
+                        onUpdateActiveFieldText(newValue)
+                    },
+                    isActive = currencyDisplayItem.currency.code == uiState.activeCurrency.currency.code
                 )
             }
 
@@ -196,29 +189,16 @@ private fun CurrencyConverterScreenContent(
         }
 
         // Custom Numeric Keyboard - Always visible
-        if (selectedCurrencies.isNotEmpty()) {
-            val currencyCode = activeCurrencyCode ?: selectedCurrencies.first().code
+        if (uiState.currencies.isNotEmpty()) {
             NumericKeyboard(
                 onNumberClick = { digit ->
-                    val currentText = getCurrentText(currencyCode)
-                    val newText = if (currentText == "0.00" || currentText == "0") digit else currentText + digit
-                    handleKeyboardInput(currencyCode, newText)
+                    onAddDigit(digit)
                 },
                 onDecimalClick = {
-                    val currentText = getCurrentText(currencyCode)
-                    if (!currentText.contains(".")) {
-                        val newText = if (currentText.isEmpty()) "0." else "$currentText."
-                        handleKeyboardInput(currencyCode, newText)
-                    }
+                    onAddDecimalPoint()
                 },
                 onBackspaceClick = {
-                    val currentText = getCurrentText(currencyCode)
-                    val newText = if (currentText.length > 1) {
-                        currentText.dropLast(1)
-                    } else {
-                        "0.00"
-                    }
-                    handleKeyboardInput(currencyCode, newText)
+                    onBackspace()
                 },
                 modifier = Modifier
                     .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -241,16 +221,23 @@ private fun CurrencyConverterScreenContent(
 @Preview(showBackground = true)
 @Composable
 fun CurrencyConverterScreenPreview() {
-    val selectedCurrencies = listOf(
+    val currencies = listOf(
         Currency("USD", "United States Dollar", "$"),
         Currency("EUR", "Euro", "€"),
         Currency("JPY", "Japanese Yen", "¥")
     )
 
-    val currencyValues = mapOf(
-        "USD" to TextFieldValue("100.00"),
-        "EUR" to TextFieldValue("84.75"),
-        "JPY" to TextFieldValue("10,967.00")
+    val currencyDisplayItems = listOf(
+        CurrencyDisplayItem(currencies[0], TextFieldValue("100.00")),
+        CurrencyDisplayItem(currencies[1], TextFieldValue("84.75")),
+        CurrencyDisplayItem(currencies[2], TextFieldValue("10,967.00"))
+    )
+
+    val uiState = CurrencyConverterUiState(
+        currencies = currencyDisplayItems,
+        activeCurrency = currencyDisplayItems[0],
+        isLoading = false,
+        error = null
     )
 
     val availableCurrencies = listOf(
@@ -260,11 +247,12 @@ fun CurrencyConverterScreenPreview() {
 
     CurrencyConverterTheme {
         CurrencyConverterScreenContent(
-            selectedCurrencies = selectedCurrencies,
-            currencyTextFieldValues = currencyValues,
-            isLoading = false,
-            error = null,
-            onKeyboardInput = { _, _ -> },
+            uiState = uiState,
+            onSetActiveCurrency = { },
+            onUpdateActiveFieldText = { },
+            onAddDigit = { },
+            onAddDecimalPoint = { },
+            onBackspace = { },
             onAddCurrency = { },
             onClearError = { },
             getAvailableCurrencies = { availableCurrencies }

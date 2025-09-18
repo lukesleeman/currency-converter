@@ -38,6 +38,7 @@ fun CurrencyItem(
     amount: TextFieldValue,
     modifier: Modifier = Modifier,
     onFocusRequest: (() -> Unit)? = null,
+    onValueChange: ((TextFieldValue) -> Unit)? = null,
     isActive: Boolean = false
 ) {
     Card(
@@ -80,16 +81,29 @@ fun CurrencyItem(
 
             Spacer(modifier = Modifier.weight(1f)) // This spacer will take up the flexible space to the left
 
-            OutlinedTextField(
-                value = amount,
-                onValueChange = { },
-                readOnly = true,
-                singleLine = true,
-                textStyle = MaterialTheme.typography.headlineSmall.copy(
-                    textAlign = TextAlign.End,
-                    fontWeight = FontWeight.Medium
+            if (isActive) {
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { newValue ->
+                        onValueChange?.invoke(newValue)
+                    },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.headlineSmall.copy(
+                        textAlign = TextAlign.End,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    modifier = Modifier.defaultMinSize(minWidth = 120.dp)
                 )
-            )
+            } else {
+                Text(
+                    text = amount.text,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        textAlign = TextAlign.End,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    modifier = Modifier.defaultMinSize(minWidth = 120.dp)
+                )
+            }
         }
     }
 }
