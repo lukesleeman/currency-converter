@@ -60,7 +60,11 @@ class CurrencyConverterViewModel(
 
         val displayItems = currencies.map { currency ->
             if (currency.code == firstCurrency.code) {
-                CurrencyDisplayItem(currency, TextFieldValue("1.00"))
+                val textValue = "1.00"
+                CurrencyDisplayItem(currency, TextFieldValue(
+                    text = textValue,
+                    selection = TextRange(0, textValue.length)
+                ))
             } else {
                 val convertedAmount = conversionResults[currency.code] ?: 1.0
                 CurrencyDisplayItem(currency, TextFieldValue(formatNumber(convertedAmount)))

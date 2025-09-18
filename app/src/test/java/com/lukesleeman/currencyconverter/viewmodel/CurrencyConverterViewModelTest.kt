@@ -81,6 +81,19 @@ class CurrencyConverterViewModelTest {
     }
 
     @Test
+    fun `should initialize with first currency text selected on app launch`() = runTest {
+        // When: ViewModel is initialized (happens in setup)
+        val uiState = viewModel.uiState.value
+
+        // Then: The active currency (first currency) should have all its text selected
+        val activeTextFieldValue = uiState.activeCurrency.textFieldValue
+        val expectedSelection = TextRange(0, activeTextFieldValue.text.length)
+
+        assertEquals(expectedSelection, activeTextFieldValue.selection,
+            "First currency text should be fully selected on app launch so user can immediately type to overwrite")
+    }
+
+    @Test
     fun `setActiveCurrency should select all text`() = runTest {
         // When: Set EUR as active
         viewModel.setActiveCurrency("EUR")
