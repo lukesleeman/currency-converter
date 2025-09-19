@@ -15,6 +15,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
 import com.lukesleeman.currencyconverter.data.Currency
+import kotlin.math.abs
 import com.lukesleeman.currencyconverter.di.AppModule
 import com.lukesleeman.currencyconverter.ui.components.AddCurrencyDialog
 import com.lukesleeman.currencyconverter.ui.components.CurrencyItem
@@ -45,7 +46,6 @@ fun CurrencyConverterScreen(
         onAddDecimalPoint = viewModel::addDecimalPoint,
         onBackspace = viewModel::backspace,
         onAddCurrency = viewModel::addCurrency,
-        onClearError = viewModel::clearError,
         getAvailableCurrencies = viewModel::getAvailableCurrencies
     )
 }
@@ -60,7 +60,6 @@ private fun CurrencyConverterScreenContent(
     onAddDecimalPoint: () -> Unit,
     onBackspace: () -> Unit,
     onAddCurrency: (Currency) -> Unit,
-    onClearError: () -> Unit,
     getAvailableCurrencies: () -> List<Currency>
 ) {
     var showAddCurrencyDialog by remember { mutableStateOf(false) }
@@ -83,68 +82,6 @@ private fun CurrencyConverterScreenContent(
             )
         )
 
-        // Info about using default rates (shown when no recent API call was successful)
-        if (!uiState.isLoading && uiState.error == null && uiState.currencies.isNotEmpty() && uiState.currencies.all { it.textFieldValue.text == "0.00" || it.textFieldValue.text == "0,00" }) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Text(
-                    text = "Using approximate exchange rates. Tap refresh for latest rates.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(12.dp)
-                )
-            }
-        }
-
-        if (uiState.isLoading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        }
-
-        uiState.error?.let { errorMessage ->
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                )
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = errorMessage,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        onClick = onClearError
-                    ) {
-                        Text(
-                            text = "Dismiss",
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                    }
-                }
-            }
-        }
 
         LazyColumn(
             modifier = Modifier
@@ -187,6 +124,34 @@ private fun CurrencyConverterScreenContent(
                             modifier = Modifier.padding(end = 8.dp)
                         )
                         Text("Add Currency")
+                    }
+                }
+            }
+
+            // Status line showing last updated time with loading indicator
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        if (uiState.isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text(
+                            text = formatLastUpdatedText(uiState.lastUpdated, uiState.isLoading),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -241,7 +206,7 @@ fun CurrencyConverterScreenPreview() {
         currencies = currencyDisplayItems,
         activeCurrency = currencyDisplayItems[0],
         isLoading = false,
-        error = null
+        lastUpdated = System.currentTimeMillis() - (5 * 60 * 1000) // 5 minutes ago
     )
 
     val availableCurrencies = listOf(
@@ -258,7 +223,6 @@ fun CurrencyConverterScreenPreview() {
             onAddDecimalPoint = { },
             onBackspace = { },
             onAddCurrency = { },
-            onClearError = { },
             getAvailableCurrencies = { availableCurrencies }
         )
     }
@@ -268,4 +232,28 @@ fun CurrencyConverterScreenPreview() {
 @Composable
 fun CurrencyConverterScreenDarkPreview() {
     CurrencyConverterScreenPreview()
+}
+
+/**
+ * Format the last updated text with time since last update
+ */
+private fun formatLastUpdatedText(lastUpdated: Long?, isLoading: Boolean): String {
+    return when {
+        isLoading -> "Updating rates..."
+        lastUpdated == null -> "Rates last updated: never"
+        else -> {
+            val now = System.currentTimeMillis()
+            val diffMinutes = (now - lastUpdated) / (1000 * 60)
+            when {
+                diffMinutes < 1 -> "Rates last updated: just now"
+                diffMinutes == 1L -> "Rates last updated: 1 min ago"
+                diffMinutes < 60 -> "Rates last updated: ${diffMinutes} mins ago"
+                else -> {
+                    val diffHours = diffMinutes / 60
+                    if (diffHours == 1L) "Rates last updated: 1 hour ago"
+                    else "Rates last updated: ${diffHours} hours ago"
+                }
+            }
+        }
+    }
 }

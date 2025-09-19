@@ -229,9 +229,10 @@ class CurrencyConverterViewModelTest {
     }
 
     @Test
-    fun `refreshExchangeRates should call onFetchRates and handle success`() = runTest {
+    fun `refreshExchangeRates should call onFetchRates and update lastUpdated on success`() = runTest {
         // Given: Reset counter after init
         fetchRatesCallCount = 0
+        val initialLastUpdated = viewModel.uiState.value.lastUpdated
 
         // When: Refresh rates
         viewModel.refreshExchangeRates()
@@ -240,9 +241,43 @@ class CurrencyConverterViewModelTest {
         // Then: Should call fetch rates
         assertEquals(1, fetchRatesCallCount)
 
-        // And: Loading and error states should be managed
+        // And: Loading state should be false and lastUpdated should be updated
         val uiState = viewModel.uiState.value
         assertEquals(false, uiState.isLoading)
-        assertEquals(null, uiState.error)
+        assertTrue(uiState.lastUpdated != null && uiState.lastUpdated != initialLastUpdated,
+            "lastUpdated should be set to current timestamp on successful refresh")
+    }
+
+    @Test
+    fun `refreshExchangeRates should not update lastUpdated on failure`() = runTest {
+        // Given: ViewModel that fails on refresh
+        val failingViewModel = CurrencyConverterViewModel(
+            selectedCurrenciesFlow = flowOf(testSelectedCurrencies),
+            addCurrency = { currency -> addedCurrencies.add(currency) },
+            getAllAvailableCurrencies = { testAllCurrencies },
+            convertAllCurrencies = { anchorCode, amount, currencies ->
+                val rates = mapOf("USD" to 1.0, "EUR" to 0.85)
+                val anchorRate = rates[anchorCode] ?: 1.0
+                currencies.associate { currency ->
+                    val targetRate = rates[currency.code] ?: 1.0
+                    val convertedAmount = amount * (targetRate / anchorRate)
+                    currency.code to convertedAmount
+                }
+            },
+            onFetchRates = { Result.failure(Exception("Network error")) }
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val initialLastUpdated = failingViewModel.uiState.value.lastUpdated
+
+        // When: Refresh rates (which will fail)
+        failingViewModel.refreshExchangeRates()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // Then: Loading should be false but lastUpdated should remain unchanged
+        val uiState = failingViewModel.uiState.value
+        assertEquals(false, uiState.isLoading)
+        assertEquals(initialLastUpdated, uiState.lastUpdated,
+            "lastUpdated should not change when refresh fails")
     }
 }

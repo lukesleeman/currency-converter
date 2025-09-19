@@ -10,7 +10,7 @@ data class CurrencyConverterUiState(
     val currencies: List<CurrencyDisplayItem>,
     val activeCurrency: CurrencyDisplayItem,
     val isLoading: Boolean = false,
-    val error: String? = null
+    val lastUpdated: Long? = null
 )
 
 /**

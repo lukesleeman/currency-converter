@@ -59,23 +59,20 @@ class CurrencyConverterViewModel(
         val conversionResults = convertAllCurrencies(firstCurrency.code, 1.0, currencies)
 
         val displayItems = currencies.map { currency ->
-            if (currency.code == firstCurrency.code) {
-                val textValue = "1.00"
-                CurrencyDisplayItem(currency, TextFieldValue(
-                    text = textValue,
-                    selection = TextRange(0, textValue.length)
-                ))
-            } else {
-                val convertedAmount = conversionResults[currency.code] ?: 1.0
-                CurrencyDisplayItem(currency, TextFieldValue(formatNumber(convertedAmount)))
-            }
+            val convertedAmount = if (currency.code == firstCurrency.code) 1.0
+                                 else conversionResults[currency.code] ?: 1.0
+            CurrencyDisplayItem(currency, TextFieldValue(formatNumber(convertedAmount)))
         }
 
         _uiState.value = _uiState.value.copy(
             currencies = displayItems,
             activeCurrency = displayItems.first(),
-            isLoading = false
+            isLoading = false,
+            lastUpdated = System.currentTimeMillis()
         )
+
+        // Use existing method to select all text in the first currency
+        setActiveCurrency(firstCurrency.code)
     }
 
     /**
@@ -110,24 +107,17 @@ class CurrencyConverterViewModel(
     fun updateActiveFieldText(newValue: TextFieldValue) {
         val currentState = _uiState.value
         val activeCurrencyCode = currentState.activeCurrency.currency.code
+        val updatedActiveCurrency = currentState.activeCurrency.copy(textFieldValue = newValue)
 
-        // Update the active currency with new value
-        val updatedActiveCurrency = currentState.activeCurrency.copy(
-            textFieldValue = newValue
+        // Replace the active currency in the list with updated value
+        val updatedCurrencies = currentState.currencies.replaceWhere(
+            predicate = { it.currency.code == activeCurrencyCode },
+            replacement = updatedActiveCurrency
         )
 
-        // Update the currencies list
-        val updatedCurrencies = currentState.currencies.map { item ->
-            if (item.currency.code == activeCurrencyCode) updatedActiveCurrency else item
-        }
-
-        // Update other currencies based on conversion if input is valid
-        val numericValue = parseAmount(newValue.text)
-        val finalCurrencies = if (numericValue != null) {
-            updateOtherCurrencies(updatedCurrencies, activeCurrencyCode, numericValue)
-        } else {
-            updatedCurrencies
-        }
+        val finalCurrencies = parseAmount(newValue.text)?.let { amount ->
+            updateOtherCurrencies(updatedCurrencies, activeCurrencyCode, amount)
+        } ?: updatedCurrencies
 
         _uiState.value = currentState.copy(
             currencies = finalCurrencies,
@@ -252,9 +242,6 @@ class CurrencyConverterViewModel(
         addCurrency.invoke(currency)
     }
 
-    fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
-    }
 
     fun getAvailableCurrencies(): List<Currency> {
         return getAllAvailableCurrencies()
@@ -266,8 +253,15 @@ class CurrencyConverterViewModel(
             val result = onFetchRates()
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
-                error = if (result.isFailure) result.exceptionOrNull()?.message else null
+                lastUpdated = if (result.isSuccess) System.currentTimeMillis() else _uiState.value.lastUpdated
             )
         }
     }
+}
+
+/**
+ * Extension function to replace an item in a list based on a predicate
+ */
+private fun <T> List<T>.replaceWhere(predicate: (T) -> Boolean, replacement: T): List<T> {
+    return map { if (predicate(it)) replacement else it }
 }
