@@ -1,4 +1,6 @@
 import java.util.Properties
+import java.net.URL
+import java.time.LocalDate
 
 plugins {
     alias(libs.plugins.android.application)
@@ -92,4 +94,76 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+// Custom task to generate DefaultRates.kt with fresh API data
+tasks.register("generateDefaultRates") {
+    group = "currency"
+    description = "Fetches fresh exchange rates from API and generates DefaultRates.kt"
+
+    doLast {
+        val apiKey = apiKeys["EXCHANGE_RATE_API_KEY"] ?: error("EXCHANGE_RATE_API_KEY not found in apikeys.properties")
+        val apiUrl = "https://v6.exchangerate-api.com/v6/$apiKey/latest/EUR"
+
+        println("Fetching exchange rates from: $apiUrl")
+
+        // Fetch data from API
+        val connection = URL(apiUrl).openConnection()
+        val response = connection.getInputStream().bufferedReader().use { reader -> reader.readText() }
+
+        // Parse JSON response (simple string parsing since we don't have Gson in build script)
+        val ratesStart = response.indexOf("\"conversion_rates\":{") + "\"conversion_rates\":{".length
+        val ratesEnd = response.indexOf("}", ratesStart)
+        val ratesJson = response.substring(ratesStart, ratesEnd)
+
+        // Extract rates
+        val rates = mutableMapOf<String, Double>()
+        val ratePattern = Regex("\"([A-Z]{3})\":([0-9.]+)")
+        ratePattern.findAll(ratesJson).forEach { match ->
+            val currency = match.groupValues[1]
+            val rate = match.groupValues[2].toDouble()
+            rates[currency] = rate
+        }
+
+        // Ensure EUR is included
+        rates["EUR"] = 1.0
+
+        // Generate Kotlin code
+        val currentDate = LocalDate.now()
+        val kotlinCode = buildString {
+            appendLine("package com.lukesleeman.currencyconverter.data")
+            appendLine()
+            appendLine("/**")
+            appendLine(" * Default exchange rates for offline functionality.")
+            appendLine(" * These rates are EUR-based (EUR = 1.0) and fetched from exchangerate-api.com on $currentDate.")
+            appendLine(" */")
+            appendLine("object DefaultRates {")
+            appendLine()
+            appendLine("    /**")
+            appendLine("     * Provides fallback exchange rates when API is unavailable.")
+            appendLine("     * All rates are relative to EUR (1 EUR equals X units of other currency).")
+            appendLine("     */")
+            appendLine("    fun getDefaultRates(): Map<String, Double> {")
+            appendLine("        return mapOf(")
+
+            // Sort rates for consistent output, with EUR first
+            val sortedRates = rates.toList().sortedWith(compareBy<Pair<String, Double>> { it.first != "EUR" }.thenBy { it.first })
+
+            sortedRates.forEachIndexed { index, (currency, rate) ->
+                val comma = if (index < sortedRates.size - 1) "," else ""
+                appendLine("            \"$currency\" to $rate$comma")
+            }
+
+            appendLine("        )")
+            appendLine("    }")
+            appendLine("}")
+        }
+
+        // Write to file
+        val outputFile = file("src/main/java/com/lukesleeman/currencyconverter/data/DefaultRates.kt")
+        outputFile.writeText(kotlinCode)
+
+        println("Generated DefaultRates.kt with ${rates.size} currencies")
+        println("File: ${outputFile.absolutePath}")
+    }
 }
