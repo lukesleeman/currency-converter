@@ -1,8 +1,11 @@
 package com.lukesleeman.currencyconverter.di
 
+import android.content.Context
+import com.lukesleeman.currencyconverter.cache.ExchangeRateFileCache
 import com.lukesleeman.currencyconverter.network.CurrencyApi
 import com.lukesleeman.currencyconverter.repository.CurrencyRepository
 import com.lukesleeman.currencyconverter.viewmodel.CurrencyConverterViewModel
+import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -29,18 +32,38 @@ object AppModule {
 
     private val currencyApi = retrofit.create(CurrencyApi::class.java)
 
-    private val currencyRepository = CurrencyRepository(currencyApi)
+    /**
+     * Create file cache for exchange rates
+     */
+    private fun createFileCache(context: Context): ExchangeRateFileCache {
+        return ExchangeRateFileCache(context.cacheDir, Json.Default)
+    }
+
+    /**
+     * Create repository with file cache and API dependencies
+     */
+    private fun createRepository(context: Context): CurrencyRepository {
+        val fileCache = createFileCache(context)
+
+        return CurrencyRepository(
+            fetchExchangeRatesFromApi = currencyApi::getExchangeRates,
+            saveRates = fileCache::saveRates,
+            loadRates = fileCache::loadRates
+        )
+    }
 
     /**
      * Provides the CurrencyConverterViewModel instance
      */
-    fun provideCurrencyConverterViewModel(): CurrencyConverterViewModel {
+    fun provideCurrencyConverterViewModel(context: Context): CurrencyConverterViewModel {
+        val repository = createRepository(context)
+
         return CurrencyConverterViewModel(
-            selectedCurrenciesFlow = currencyRepository.selectedCurrencies,
-            addCurrency = currencyRepository::addCurrency,
-            getAllAvailableCurrencies = currencyRepository::getAvailableCurrencies,
-            convertAllCurrencies = currencyRepository::convertAllCurrencies,
-            onFetchRates = currencyRepository::fetchExchangeRates
+            selectedCurrenciesFlow = repository.selectedCurrencies,
+            addCurrency = repository::addCurrency,
+            getAllAvailableCurrencies = repository::getAvailableCurrencies,
+            convertAllCurrencies = repository::convertAllCurrencies,
+            onFetchRates = repository::fetchExchangeRates
         )
     }
 }

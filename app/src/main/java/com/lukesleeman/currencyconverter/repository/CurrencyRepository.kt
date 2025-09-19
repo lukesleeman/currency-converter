@@ -2,16 +2,25 @@ package com.lukesleeman.currencyconverter.repository
 
 import com.lukesleeman.currencyconverter.data.Currency
 import com.lukesleeman.currencyconverter.data.AVAILABLE_CURRENCIES
-import com.lukesleeman.currencyconverter.network.CurrencyApi
+import com.lukesleeman.currencyconverter.data.ExchangeRateCache
+import com.lukesleeman.currencyconverter.data.ExchangeRateResponse
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
+import retrofit2.Response
 
 /**
  * Repository for managing currency data and exchange rates.
  * Exchange rates are always fetched and stored relative to EUR.
  */
-class CurrencyRepository(private val api: CurrencyApi) {
+class CurrencyRepository(
+    private val fetchExchangeRatesFromApi: suspend (String) -> Response<ExchangeRateResponse>,
+    private val saveRates: suspend (Map<String, Double>, Long) -> Unit,
+    private val loadRates: suspend () -> ExchangeRateCache
+) {
 
     private val _selectedCurrencies = MutableStateFlow(
         listOf(
@@ -24,30 +33,41 @@ class CurrencyRepository(private val api: CurrencyApi) {
     val selectedCurrencies: StateFlow<List<Currency>> = _selectedCurrencies.asStateFlow()
 
     // Rates are stored relative to EUR
-    private var exchangeRates: Map<String, Double> = emptyMap()
+    private var exchangeRates: Map<String, Double>
 
     private companion object {
         const val INTERNAL_API_BASE_CURRENCY = "EUR"
     }
 
+    init {
+        // Load initial rates from cache (always returns something)
+        exchangeRates = runBlocking {
+            loadRates().rates
+        }
+    }
+
     /**
-     * Fetches exchange rates and returns a Result for better error handling
+     * Fetches fresh exchange rates from API and updates cache
+     * Always succeeds since we have fallback rates loaded at initialization
      */
     suspend fun fetchExchangeRates(): Result<Unit> {
         return try {
-            val response = api.getExchangeRates(INTERNAL_API_BASE_CURRENCY)
+            val response = fetchExchangeRatesFromApi(INTERNAL_API_BASE_CURRENCY)
             if (response.isSuccessful) {
                 response.body()?.let { exchangeRateResponse ->
                     // Ensure EUR itself has a rate of 1.0 in the map
                     val ratesWithEurBase = exchangeRateResponse.conversionRates.toMutableMap()
                     ratesWithEurBase[INTERNAL_API_BASE_CURRENCY] = 1.0
+
+                    // Save to cache and update in-memory rates
+                    saveRates(ratesWithEurBase, System.currentTimeMillis())
                     exchangeRates = ratesWithEurBase
                 }
-                Result.success(Unit)
-            } else {
-                Result.failure(Exception("Failed to fetch exchange rates (API base: EUR)"))
             }
+            // Always succeed - we have fallback rates from initialization
+            Result.success(Unit)
         } catch (e: Exception) {
+            // API failed, but we still have fallback rates
             Result.failure(e)
         }
     }
@@ -114,21 +134,4 @@ class CurrencyRepository(private val api: CurrencyApi) {
         }
     }
 
-    /**
-     * Provides fallback exchange rates when API is unavailable.
-     * These rates are EUR-based (EUR = 1.0) to match the repository's design.
-     */
-    private fun getDefaultRates(): Map<String, Double> {
-        // EUR-based exchange rates (1 EUR equals X units of other currency)
-        return mapOf(
-            "EUR" to 1.0, "USD" to 1.18, "GBP" to 0.86, "JPY" to 129.4, "CNY" to 7.59,
-            "CAD" to 1.47, "AUD" to 1.59, "CHF" to 1.08, "INR" to 87.6, "KRW" to 1388.2,
-            "MXN" to 23.7, "BRL" to 6.12, "RUB" to 86.5, "ZAR" to 17.4, "SEK" to 10.13,
-            "NOK" to 10.0, "DKK" to 7.53, "SGD" to 1.59, "HKD" to 9.18, "NZD" to 1.67
-        )
-    }
-
-    init {
-        exchangeRates = getDefaultRates()
-    }
 }

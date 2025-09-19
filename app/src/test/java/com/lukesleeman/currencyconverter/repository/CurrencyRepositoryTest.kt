@@ -1,7 +1,7 @@
 package com.lukesleeman.currencyconverter.repository
 
 import com.lukesleeman.currencyconverter.data.AVAILABLE_CURRENCIES
-import com.lukesleeman.currencyconverter.network.CurrencyApi
+import com.lukesleeman.currencyconverter.data.ExchangeRateCache
 import com.lukesleeman.currencyconverter.data.ExchangeRateResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -10,25 +10,31 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mock
-import org.mockito.MockitoAnnotations
-import org.mockito.kotlin.whenever
 import retrofit2.Response
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CurrencyRepositoryTest {
 
-    @Mock
-    private lateinit var mockApi: CurrencyApi
-
     private lateinit var repository: CurrencyRepository
     private val testDispatcher = StandardTestDispatcher()
+
+    // Test state for lambda dependencies - no mocks needed!
+    private var apiResponse: Response<ExchangeRateResponse>? = null
+    private var apiThrowsException: Exception? = null
+    private var savedRates: Map<String, Double>? = null
+    private var savedTimestamp: Long? = null
+    private var cachedData: ExchangeRateCache? = null
 
     private val usdCurrency = AVAILABLE_CURRENCIES.first { it.code == "USD" }
     private val eurCurrency = AVAILABLE_CURRENCIES.first { it.code == "EUR" }
@@ -36,15 +42,45 @@ class CurrencyRepositoryTest {
 
     @Before
     fun setup() {
-        MockitoAnnotations.openMocks(this)
         Dispatchers.setMain(testDispatcher)
-        repository = CurrencyRepository(mockApi)
+
+        // Reset test state
+        apiResponse = null
+        apiThrowsException = null
+        savedRates = null
+        savedTimestamp = null
+        cachedData = null
+
+        repository = CurrencyRepository(
+            fetchExchangeRatesFromApi = { baseCurrency ->
+                apiThrowsException?.let { throw it }
+                apiResponse ?: Response.error(500, "No response configured".toResponseBody("text/plain".toMediaType()))
+            },
+            saveRates = { rates, timestamp ->
+                savedRates = rates
+                savedTimestamp = timestamp
+            },
+            loadRates = {
+                cachedData ?: ExchangeRateCache(
+                    rates = mapOf(
+                        "EUR" to 1.0,
+                        "USD" to 1.1793,
+                        "GBP" to 0.8690,
+                        "JPY" to 174.1276
+                    ),
+                    timestamp = System.currentTimeMillis(),
+                    baseCurrency = "EUR"
+                )
+            }
+        )
     }
 
     @After
     fun tearDown() {
         Dispatchers.resetMain()
     }
+
+    // ==== Basic Repository Functionality Tests ====
 
     @Test
     fun `selectedCurrencies should start with default currencies`() = runTest {
@@ -79,7 +115,6 @@ class CurrencyRepositoryTest {
         assertEquals(initialCount, finalCount)
     }
 
-
     @Test
     fun `getAvailableCurrencies should return non-selected currencies`() {
         val availableCurrencies = repository.getAvailableCurrencies()
@@ -95,39 +130,167 @@ class CurrencyRepositoryTest {
         assertTrue(availableCurrencies.any { it.code == "CAD" })
     }
 
+    @Test
+    fun `convertAllCurrencies should work with default rates when no API data fetched`() = runTest {
+        // Wait for repository initialization to complete
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // Given: Repository with default rates (no API call made)
+        val currencies = listOf(usdCurrency, eurCurrency, gbpCurrency)
+
+        // When: Convert currencies
+        val result = repository.convertAllCurrencies("EUR", 100.0, currencies)
+
+        // Then: Should use default rates from getDefaultRates()
+        assertEquals(3, result.size)
+        assertEquals(100.0, result["EUR"]) // Same currency
+
+        // Should have USD and GBP conversions (using default rates)
+        assertNotNull(result["USD"])
+        assertNotNull(result["GBP"])
+        assertTrue(result["USD"]!! > 0)
+        assertTrue(result["GBP"]!! > 0)
+    }
 
     @Test
-    fun `convertAllCurrencies should convert all currencies in list`() {
+    fun `convertAllCurrencies should convert all currencies in list`() = runTest {
+        // Wait for repository initialization to complete
+        testDispatcher.scheduler.advanceUntilIdle()
+
         val currencies = listOf(usdCurrency, eurCurrency, gbpCurrency)
         val result = repository.convertAllCurrencies("EUR", 100.0, currencies)
 
         assertEquals(3, result.size)
-        assertEquals(118.0, result["USD"]) // 100 EUR * 1.18
+        assertEquals(117.93, result["USD"]!!, 0.01) // 100 EUR * 1.1793
         assertEquals(100.0, result["EUR"]) // Same currency
-        assertEquals(86.0, result["GBP"])  // 100 EUR * 0.86
+        assertEquals(86.90, result["GBP"]!!, 0.01)  // 100 EUR * 0.8690
     }
 
+    // ==== API and Persistence Tests ====
+
     @Test
-    fun `fetchExchangeRates should return success when API succeeds`() = runTest {
-        val mockResponse = ExchangeRateResponse(
-            baseCode = "EUR",
-            conversionRates = mapOf("USD" to 1.20, "GBP" to 0.85, "EUR" to 1.0)
-        )
-        whenever(mockApi.getExchangeRates("EUR")).thenReturn(Response.success(mockResponse))
+    fun `fetchExchangeRates should save to cache when API succeeds`() = runTest {
+        // Given: Successful API response
+        val apiRates = mapOf("USD" to 1.18, "GBP" to 0.86, "JPY" to 129.4)
+        val response = ExchangeRateResponse("EUR", apiRates)
+        apiResponse = Response.success(response)
 
+        // When: Fetch exchange rates
         val result = repository.fetchExchangeRates()
-        testDispatcher.scheduler.advanceUntilIdle()
 
+        // Then: Should save rates to cache via lambda
         assertTrue(result.isSuccess)
+        assertNotNull(savedRates)
+        assertEquals(mapOf("USD" to 1.18, "GBP" to 0.86, "JPY" to 129.4, "EUR" to 1.0), savedRates)
+        assertNotNull(savedTimestamp)
+        assertTrue(savedTimestamp!! > 0)
+
+        // And: Repository should use the fetched rates for conversions
+        val convertedAmount = repository.convertAllCurrencies("EUR", 100.0, listOf(usdCurrency))["USD"]!!
+        assertEquals(118.0, convertedAmount, 0.01)
     }
 
     @Test
-    fun `fetchExchangeRates should return failure when API throws exception`() = runTest {
-        whenever(mockApi.getExchangeRates("EUR")).thenThrow(RuntimeException("Network error"))
+    fun `fetchExchangeRates should fail when API throws exception but keep existing rates`() = runTest {
+        // Given: API throws exception, repository already initialized with cached data
+        apiThrowsException = RuntimeException("Network error")
+        val freshTimestamp = System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(30)
+        cachedData = ExchangeRateCache(
+            rates = mapOf("USD" to 1.15, "GBP" to 0.88, "EUR" to 1.0),
+            timestamp = freshTimestamp,
+            baseCurrency = "EUR"
+        )
 
+        // When: Fetch exchange rates
         val result = repository.fetchExchangeRates()
-        testDispatcher.scheduler.advanceUntilIdle()
 
+        // Then: Should fail due to exception
         assertTrue(result.isFailure)
+
+        // No new rates should be saved (API failed)
+        assertNull(savedRates)
+
+        // Repository should keep using initialized rates (from cache in constructor)
+        val convertedAmount = repository.convertAllCurrencies("EUR", 100.0, listOf(usdCurrency))["USD"]!!
+        assertEquals(115.0, convertedAmount, 0.01)
+    }
+
+    @Test
+    fun `fetchExchangeRates should fail when API throws exception with expired cache`() = runTest {
+        // Given: API throws exception, repository initialized with expired cached data
+        apiThrowsException = RuntimeException("Network error")
+        val expiredTimestamp = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(2)
+        cachedData = ExchangeRateCache(
+            rates = mapOf("USD" to 1.20, "EUR" to 1.0),
+            timestamp = expiredTimestamp,
+            baseCurrency = "EUR"
+        )
+
+        // When: Fetch exchange rates
+        val result = repository.fetchExchangeRates()
+
+        // Then: Should fail due to exception
+        assertTrue(result.isFailure)
+
+        // No new rates should be saved (API failed)
+        assertNull(savedRates)
+
+        // Repository should keep using initialized rates
+        val convertedAmount = repository.convertAllCurrencies("EUR", 100.0, listOf(usdCurrency))["USD"]!!
+        assertEquals(120.0, convertedAmount, 0.01)
+    }
+
+    @Test
+    fun `fetchExchangeRates should fail when API throws exception but have default rates`() = runTest {
+        // Given: API throws exception and no cached data (will use default rates)
+        apiThrowsException = RuntimeException("Network error")
+        cachedData = null
+
+        // When: Fetch exchange rates
+        val result = repository.fetchExchangeRates()
+
+        // Then: Should fail due to exception
+        assertTrue(result.isFailure)
+
+        // No new rates should be saved (API failed)
+        assertNull(savedRates)
+
+        // But repository still works with default rates from initialization
+        val convertedAmount = repository.convertAllCurrencies("EUR", 100.0, listOf(usdCurrency))["USD"]!!
+        assertTrue(convertedAmount > 0) // Should have some conversion using default rates
+    }
+
+    @Test
+    fun `fetchExchangeRates should handle API success response but null body`() = runTest {
+        // Given: API success but null response body
+        apiResponse = Response.success(null)
+
+        // When: Fetch exchange rates
+        val result = repository.fetchExchangeRates()
+
+        // Then: Should succeed with default rates from cache
+        assertTrue(result.isSuccess)
+        assertNull(savedRates)
+    }
+
+    @Test
+    fun `fetchExchangeRates should succeed when API returns error and keep existing rates`() = runTest {
+        // Given: API returns unsuccessful response, repository initialized with cached data
+        apiResponse = Response.error(500, "Server Error".toResponseBody("text/plain".toMediaType()))
+        cachedData = ExchangeRateCache(
+            rates = mapOf("USD" to 1.22, "EUR" to 1.0),
+            timestamp = System.currentTimeMillis(),
+            baseCurrency = "EUR"
+        )
+
+        // When: Fetch exchange rates
+        val result = repository.fetchExchangeRates()
+
+        // Then: Should succeed (always succeeds now)
+        assertTrue(result.isSuccess)
+
+        // Should keep using initialized rates
+        val convertedAmount = repository.convertAllCurrencies("EUR", 100.0, listOf(usdCurrency))["USD"]!!
+        assertEquals(122.0, convertedAmount, 0.01)
     }
 }
