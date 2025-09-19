@@ -5,9 +5,14 @@ import com.lukesleeman.currencyconverter.data.AVAILABLE_CURRENCIES
 import com.lukesleeman.currencyconverter.data.CURRENCY_INFO
 import com.lukesleeman.currencyconverter.data.ExchangeRateCache
 import com.lukesleeman.currencyconverter.data.ExchangeRateResponse
+import com.lukesleeman.currencyconverter.data.UserPreferences
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -20,17 +25,13 @@ import retrofit2.Response
 class CurrencyRepository(
     private val fetchExchangeRatesFromApi: suspend (String) -> Response<ExchangeRateResponse>,
     private val saveRates: suspend (Map<String, Double>, Long) -> Unit,
-    private val loadRates: suspend () -> ExchangeRateCache
+    private val loadRates: suspend () -> ExchangeRateCache,
+    private val loadPreferences: suspend () -> UserPreferences,
+    private val savePreferences: suspend (UserPreferences) -> Unit
 ) {
 
-    private val _selectedCurrencies = MutableStateFlow(
-        listOf(
-            AVAILABLE_CURRENCIES.first { it.code == "USD" },
-            AVAILABLE_CURRENCIES.first { it.code == "EUR" },
-            AVAILABLE_CURRENCIES.first { it.code == "GBP" },
-            AVAILABLE_CURRENCIES.first { it.code == "JPY" }
-        )
-    )
+    private val repositoryScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val _selectedCurrencies = MutableStateFlow<List<Currency>>(emptyList())
     val selectedCurrencies: StateFlow<List<Currency>> = _selectedCurrencies.asStateFlow()
 
     // Rates are stored relative to EUR
@@ -45,6 +46,19 @@ class CurrencyRepository(
         exchangeRates = runBlocking {
             loadRates().rates
         }
+
+        // Load initial selected currencies from preferences
+        repositoryScope.launch {
+            refreshSelectedCurrenciesFromPreferences()
+        }
+    }
+
+    private suspend fun refreshSelectedCurrenciesFromPreferences() {
+        val preferences = loadPreferences()
+        val currencies = preferences.selectedCurrencyCodes.map { code ->
+            createCurrencyFromCode(code)
+        }
+        _selectedCurrencies.value = currencies
     }
 
     /**
@@ -73,18 +87,48 @@ class CurrencyRepository(
         }
     }
 
-    fun addCurrency(currency: Currency) {
-        val currentList = _selectedCurrencies.value.toMutableList()
-        if (!currentList.contains(currency)) {
-            currentList.add(currency)
-            _selectedCurrencies.value = currentList
+    suspend fun addCurrency(currency: Currency) {
+        val currentPreferences = getPreferences()
+        val currentCodes = currentPreferences.selectedCurrencyCodes.toMutableList()
+
+        if (!currentCodes.contains(currency.code)) {
+            currentCodes.add(currency.code)
+            updatePreferences { preferences ->
+                preferences.copy(selectedCurrencyCodes = currentCodes)
+            }
+            // Update the StateFlow to reflect the change
+            refreshSelectedCurrenciesFromPreferences()
         }
     }
 
+    suspend fun removeCurrency(currency: Currency) {
+        val currentPreferences = getPreferences()
+        val currentCodes = currentPreferences.selectedCurrencyCodes.toMutableList()
+
+        if (currentCodes.remove(currency.code)) {
+            updatePreferences { preferences ->
+                preferences.copy(selectedCurrencyCodes = currentCodes)
+            }
+            // Update the StateFlow to reflect the change
+            refreshSelectedCurrenciesFromPreferences()
+        }
+    }
+
+    suspend fun getPreferences(): UserPreferences {
+        return loadPreferences()
+    }
+
+    suspend fun updatePreferences(update: (UserPreferences) -> UserPreferences) {
+        val currentPreferences = loadPreferences()
+        val updatedPreferences = update(currentPreferences)
+        savePreferences(updatedPreferences)
+    }
+
     fun getAvailableCurrencies(): List<Currency> {
-        val selected = _selectedCurrencies.value.map { it.code }.toSet()
+        val preferences = runBlocking { getPreferences() }
+        val selectedCodes = preferences.selectedCurrencyCodes.toSet()
         val allCurrencies = getAllCurrenciesFromRates()
-        return allCurrencies.filter { it.code !in selected }
+        return allCurrencies.filter { it.code !in selectedCodes }
     }
 
     /**

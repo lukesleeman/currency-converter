@@ -18,7 +18,7 @@ data class UserPreferences(
     /**
      * The currently active/focused currency code
      */
-    val activeCurrencyCode: String? = null,
+    val activeCurrencyCode: String = "USD",
 
     /**
      * The current input value as a string (what user has typed)

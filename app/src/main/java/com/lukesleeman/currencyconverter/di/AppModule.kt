@@ -2,6 +2,7 @@ package com.lukesleeman.currencyconverter.di
 
 import android.content.Context
 import com.lukesleeman.currencyconverter.cache.ExchangeRateFileCache
+import com.lukesleeman.currencyconverter.cache.UserPreferencesFileCache
 import com.lukesleeman.currencyconverter.network.CurrencyApi
 import com.lukesleeman.currencyconverter.repository.CurrencyRepository
 import com.lukesleeman.currencyconverter.viewmodel.CurrencyConverterViewModel
@@ -40,15 +41,25 @@ object AppModule {
     }
 
     /**
+     * Create file cache for user preferences
+     */
+    private fun createUserPreferencesCache(context: Context): UserPreferencesFileCache {
+        return UserPreferencesFileCache(context.cacheDir, Json.Default)
+    }
+
+    /**
      * Create repository with file cache and API dependencies
      */
     private fun createRepository(context: Context): CurrencyRepository {
         val fileCache = createFileCache(context)
+        val preferencesCache = createUserPreferencesCache(context)
 
         return CurrencyRepository(
             fetchExchangeRatesFromApi = currencyApi::getExchangeRates,
             saveRates = fileCache::saveRates,
-            loadRates = fileCache::loadRates
+            loadRates = fileCache::loadRates,
+            loadPreferences = preferencesCache::loadPreferences,
+            savePreferences = preferencesCache::savePreferences
         )
     }
 
@@ -63,7 +74,9 @@ object AppModule {
             addCurrency = repository::addCurrency,
             getAllAvailableCurrencies = repository::getAvailableCurrencies,
             convertAllCurrencies = repository::convertAllCurrencies,
-            onFetchRates = repository::fetchExchangeRates
+            onFetchRates = repository::fetchExchangeRates,
+            getPreferences = repository::getPreferences,
+            updatePreferences = repository::updatePreferences
         )
     }
 }

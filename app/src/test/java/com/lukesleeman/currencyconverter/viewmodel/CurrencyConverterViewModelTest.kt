@@ -3,6 +3,7 @@ package com.lukesleeman.currencyconverter.viewmodel
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.lukesleeman.currencyconverter.data.Currency
+import com.lukesleeman.currencyconverter.data.UserPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
@@ -35,12 +36,16 @@ class CurrencyConverterViewModelTest {
 
     private lateinit var addedCurrencies: MutableList<Currency>
     private var fetchRatesCallCount = 0
+    private var testActiveCurrencyCode: String = "USD"
+    private var testCurrentInputValue: String = "1.00"
 
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         addedCurrencies = mutableListOf()
         fetchRatesCallCount = 0
+        testActiveCurrencyCode = "USD"
+        testCurrentInputValue = "1.00"
 
         viewModel = CurrencyConverterViewModel(
             selectedCurrenciesFlow = flowOf(testSelectedCurrencies),
@@ -60,6 +65,23 @@ class CurrencyConverterViewModelTest {
             onFetchRates = {
                 fetchRatesCallCount++
                 Result.success(Unit)
+            },
+            getPreferences = {
+                UserPreferences(
+                    selectedCurrencyCodes = testSelectedCurrencies.map { it.code },
+                    activeCurrencyCode = testActiveCurrencyCode,
+                    currentInputValue = testCurrentInputValue
+                )
+            },
+            updatePreferences = { update ->
+                val currentPrefs = UserPreferences(
+                    selectedCurrencyCodes = testSelectedCurrencies.map { it.code },
+                    activeCurrencyCode = testActiveCurrencyCode,
+                    currentInputValue = testCurrentInputValue
+                )
+                val updated = update(currentPrefs)
+                testActiveCurrencyCode = updated.activeCurrencyCode
+                testCurrentInputValue = updated.currentInputValue
             }
         )
         testDispatcher.scheduler.advanceUntilIdle()
@@ -222,6 +244,7 @@ class CurrencyConverterViewModelTest {
     fun `addCurrency should call addCurrency callback`() = runTest {
         // When: Add GBP currency
         viewModel.addCurrency(gbpCurrency)
+        testDispatcher.scheduler.advanceUntilIdle()
 
         // Then: Should call the callback
         assertEquals(1, addedCurrencies.size)
@@ -264,7 +287,24 @@ class CurrencyConverterViewModelTest {
                     currency.code to convertedAmount
                 }
             },
-            onFetchRates = { Result.failure(Exception("Network error")) }
+            onFetchRates = { Result.failure(Exception("Network error")) },
+            getPreferences = {
+                UserPreferences(
+                    selectedCurrencyCodes = testSelectedCurrencies.map { it.code },
+                    activeCurrencyCode = testActiveCurrencyCode,
+                    currentInputValue = testCurrentInputValue
+                )
+            },
+            updatePreferences = { update ->
+                val currentPrefs = UserPreferences(
+                    selectedCurrencyCodes = testSelectedCurrencies.map { it.code },
+                    activeCurrencyCode = testActiveCurrencyCode,
+                    currentInputValue = testCurrentInputValue
+                )
+                val updated = update(currentPrefs)
+                testActiveCurrencyCode = updated.activeCurrencyCode
+                testCurrentInputValue = updated.currentInputValue
+            }
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -279,5 +319,20 @@ class CurrencyConverterViewModelTest {
         assertEquals(false, uiState.isLoading)
         assertEquals(initialLastUpdated, uiState.lastUpdated,
             "lastUpdated should not change when refresh fails")
+    }
+
+    @Test
+    fun `setActiveCurrency should update currentInputValue in preferences to match new active currency text`() = runTest {
+        // Given: USD is active with "100.00"
+        viewModel.updateActiveFieldText(TextFieldValue("100.00"))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // When: Switch to EUR (which should have converted value "85.00")
+        viewModel.setActiveCurrency("EUR")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // Then: currentInputValue in preferences should be updated to EUR's text value
+        assertEquals("85.00", testCurrentInputValue,
+            "currentInputValue should be updated to match the new active currency's text value")
     }
 }

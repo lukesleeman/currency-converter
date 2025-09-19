@@ -4,6 +4,7 @@ import com.lukesleeman.currencyconverter.data.AVAILABLE_CURRENCIES
 import com.lukesleeman.currencyconverter.data.DefaultRates
 import com.lukesleeman.currencyconverter.data.ExchangeRateCache
 import com.lukesleeman.currencyconverter.data.ExchangeRateResponse
+import com.lukesleeman.currencyconverter.data.UserPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -36,6 +37,8 @@ class CurrencyRepositoryTest {
     private var savedRates: Map<String, Double>? = null
     private var savedTimestamp: Long? = null
     private var cachedData: ExchangeRateCache? = null
+    private var userPreferences: UserPreferences? = null
+    private var savedPreferences: UserPreferences? = null
 
     private val usdCurrency = AVAILABLE_CURRENCIES.first { it.code == "USD" }
     private val eurCurrency = AVAILABLE_CURRENCIES.first { it.code == "EUR" }
@@ -51,6 +54,8 @@ class CurrencyRepositoryTest {
         savedRates = null
         savedTimestamp = null
         cachedData = null
+        userPreferences = null
+        savedPreferences = null
 
         repository = CurrencyRepository(
             fetchExchangeRatesFromApi = { baseCurrency ->
@@ -67,6 +72,12 @@ class CurrencyRepositoryTest {
                     timestamp = System.currentTimeMillis(),
                     baseCurrency = "EUR"
                 )
+            },
+            loadPreferences = {
+                userPreferences ?: UserPreferences.default()
+            },
+            savePreferences = { preferences ->
+                savedPreferences = preferences
             }
         )
     }

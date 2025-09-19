@@ -5,6 +5,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lukesleeman.currencyconverter.data.Currency
+import com.lukesleeman.currencyconverter.data.UserPreferences
 import kotlinx.coroutines.flow.Flow
 import com.lukesleeman.currencyconverter.ui.state.CurrencyConverterUiState
 import com.lukesleeman.currencyconverter.ui.state.CurrencyDisplayItem
@@ -16,10 +17,12 @@ import java.text.DecimalFormat
 
 class CurrencyConverterViewModel(
     private val selectedCurrenciesFlow: Flow<List<Currency>>,
-    private val addCurrency: (Currency) -> Unit,
+    private val addCurrency: suspend (Currency) -> Unit,
     private val getAllAvailableCurrencies: () -> List<Currency>,
     private val convertAllCurrencies: (anchorCode: String, amount: Double, currencies: List<Currency>) -> Map<String, Double>,
-    private val onFetchRates: suspend () -> Result<Unit>
+    private val onFetchRates: suspend () -> Result<Unit>,
+    private val getPreferences: suspend () -> UserPreferences,
+    private val updatePreferences: suspend ((UserPreferences) -> UserPreferences) -> Unit
 ) : ViewModel() {
 
     companion object {
@@ -55,24 +58,34 @@ class CurrencyConverterViewModel(
     }
 
     private fun initializeWithCurrencies(currencies: List<Currency>) {
-        val firstCurrency = currencies.first()
-        val conversionResults = convertAllCurrencies(firstCurrency.code, 1.0, currencies)
+        viewModelScope.launch {
+            val preferences = getPreferences()
+            val activeCurrencyCode = preferences.activeCurrencyCode
+            val currentInputValue = preferences.currentInputValue
+            val amount = parseAmount(currentInputValue) ?: 1.0
 
-        val displayItems = currencies.map { currency ->
-            val convertedAmount = if (currency.code == firstCurrency.code) 1.0
-                                 else conversionResults[currency.code] ?: 1.0
-            CurrencyDisplayItem(currency, TextFieldValue(formatNumber(convertedAmount)))
+            val activeCurrency = currencies.find { it.code == activeCurrencyCode } ?: currencies.first()
+            val conversionResults = convertAllCurrencies(activeCurrency.code, amount, currencies)
+
+            val displayItems = currencies.map { currency ->
+                val convertedAmount = if (currency.code == activeCurrency.code) amount
+                                     else conversionResults[currency.code] ?: amount
+                val formattedValue = if (currency.code == activeCurrency.code) currentInputValue else formatNumber(convertedAmount)
+                CurrencyDisplayItem(currency, TextFieldValue(formattedValue))
+            }
+
+            val activeDisplayItem = displayItems.find { it.currency.code == activeCurrency.code } ?: displayItems.first()
+
+            _uiState.value = _uiState.value.copy(
+                currencies = displayItems,
+                activeCurrency = activeDisplayItem,
+                isLoading = false,
+                lastUpdated = System.currentTimeMillis()
+            )
+
+            // Select all text in the active currency
+            setActiveCurrency(activeCurrency.code)
         }
-
-        _uiState.value = _uiState.value.copy(
-            currencies = displayItems,
-            activeCurrency = displayItems.first(),
-            isLoading = false,
-            lastUpdated = System.currentTimeMillis()
-        )
-
-        // Use existing method to select all text in the first currency
-        setActiveCurrency(firstCurrency.code)
     }
 
     /**
@@ -99,6 +112,16 @@ class CurrencyConverterViewModel(
             currencies = updatedCurrencies,
             activeCurrency = activeCurrencyWithSelection
         )
+
+        // Save to preferences
+        viewModelScope.launch {
+            updatePreferences { preferences ->
+                preferences.copy(
+                    activeCurrencyCode = currencyCode,
+                    currentInputValue = activeCurrencyWithSelection.textFieldValue.text
+                )
+            }
+        }
     }
 
     /**
@@ -123,6 +146,13 @@ class CurrencyConverterViewModel(
             currencies = finalCurrencies,
             activeCurrency = updatedActiveCurrency
         )
+
+        // Save to preferences
+        viewModelScope.launch {
+            updatePreferences { preferences ->
+                preferences.copy(currentInputValue = newValue.text)
+            }
+        }
     }
 
     /**
@@ -239,7 +269,9 @@ class CurrencyConverterViewModel(
     }
 
     fun addCurrency(currency: Currency) {
-        addCurrency.invoke(currency)
+        viewModelScope.launch {
+            addCurrency.invoke(currency)
+        }
     }
 
 
