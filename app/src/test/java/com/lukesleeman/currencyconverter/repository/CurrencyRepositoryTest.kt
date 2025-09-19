@@ -1,6 +1,7 @@
 package com.lukesleeman.currencyconverter.repository
 
 import com.lukesleeman.currencyconverter.data.AVAILABLE_CURRENCIES
+import com.lukesleeman.currencyconverter.data.DefaultRates
 import com.lukesleeman.currencyconverter.data.ExchangeRateCache
 import com.lukesleeman.currencyconverter.data.ExchangeRateResponse
 import kotlinx.coroutines.Dispatchers
@@ -62,12 +63,7 @@ class CurrencyRepositoryTest {
             },
             loadRates = {
                 cachedData ?: ExchangeRateCache(
-                    rates = mapOf(
-                        "EUR" to 1.0,
-                        "USD" to 1.1793,
-                        "GBP" to 0.8690,
-                        "JPY" to 174.1276
-                    ),
+                    rates = DefaultRates.getDefaultRates(),
                     timestamp = System.currentTimeMillis(),
                     baseCurrency = "EUR"
                 )

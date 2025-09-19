@@ -2,6 +2,7 @@ package com.lukesleeman.currencyconverter.repository
 
 import com.lukesleeman.currencyconverter.data.Currency
 import com.lukesleeman.currencyconverter.data.AVAILABLE_CURRENCIES
+import com.lukesleeman.currencyconverter.data.CURRENCY_INFO
 import com.lukesleeman.currencyconverter.data.ExchangeRateCache
 import com.lukesleeman.currencyconverter.data.ExchangeRateResponse
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -82,7 +83,25 @@ class CurrencyRepository(
 
     fun getAvailableCurrencies(): List<Currency> {
         val selected = _selectedCurrencies.value.map { it.code }.toSet()
-        return AVAILABLE_CURRENCIES.filter { it.code !in selected }
+        val allCurrencies = getAllCurrenciesFromRates()
+        return allCurrencies.filter { it.code !in selected }
+    }
+
+    /**
+     * Generate Currency objects from all available exchange rates
+     */
+    private fun getAllCurrenciesFromRates(): List<Currency> {
+        val availableRates = exchangeRates.keys
+        return availableRates.map { currencyCode: String ->
+            createCurrencyFromCode(currencyCode)
+        }.sortedBy { currency: Currency -> currency.code }
+    }
+
+    /**
+     * Create a Currency object from a currency code using comprehensive mapping
+     */
+    private fun createCurrencyFromCode(code: String): Currency {
+        return CURRENCY_INFO[code] ?: Currency(code, code, "🏳️")
     }
 
     /**
